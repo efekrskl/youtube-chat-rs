@@ -1,0 +1,20 @@
+[package]
+name = "yt-chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+reqwest = "0.13.2"
+tonic = { version = "0.14.5", features = ["_tls-any", "tls-native-roots"] }
+yup-oauth2 = "12.1.2"
+tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
+dialoguer = "0.12.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+prost = "0.14.3"
+tonic-prost = "0.14.5"
+rustls = { version = "0.23", features = ["ring"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14.5"
