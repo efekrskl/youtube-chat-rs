@@ -1,4 +1,5 @@
 use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
+use log::debug;
 
 pub async fn auth() -> anyhow::Result<String> {
     rustls::crypto::ring::default_provider()
@@ -13,13 +14,15 @@ pub async fn auth() -> anyhow::Result<String> {
         .await?;
 
     let scopes = &["https://www.googleapis.com/auth/youtube.readonly"];
+    debug!("requesting OAuth token for readonly scope");
 
     let access_token = auth.token(scopes).await?;
-    
+
     let token = match access_token.token() {
         Some(t) => t,
         None => panic!("Couldn't get oauth token"),
     };
-    
+
+    debug!("OAuth token acquired");
     Ok(token.to_string())
 }
