@@ -17,6 +17,7 @@ tonic-prost = "0.14.5"
 rustls = { version = "0.23", features = ["ring"] }
 env_logger = "0.11.9"
 log = "0.4.29"
+ratatui = "0.30.0"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

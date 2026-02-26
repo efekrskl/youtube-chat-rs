@@ -1,4 +1,5 @@
 mod youtube;
+mod ui;
 
 use dialoguer::Input;
 use log::debug;
@@ -11,6 +12,9 @@ pub mod youtube_api_v3 {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    ui::run_ui();
+    return Ok(());
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
     debug!("application start");
 
