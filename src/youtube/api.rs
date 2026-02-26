@@ -1,13 +1,15 @@
+use crate::app::event::{AppEvent, ChatMessage, MessageKind};
+use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use anyhow::{Context, bail};
 use log::debug;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
-use crate::youtube::models::{SearchResponse, VideoListResponse};
 
 pub struct YoutubeService {
     token: String,
@@ -149,7 +151,11 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
-    pub async fn stream_chat(&self, live_chat_id: &str) -> anyhow::Result<()> {
+    pub async fn stream_chat(
+        &self,
+        live_chat_id: &str,
+        tx: mpsc::Sender<AppEvent>,
+    ) -> anyhow::Result<()> {
         debug!("listen start live_chat_id={}", live_chat_id);
         let tls = ClientTlsConfig::new().with_native_roots();
         let channel: Channel = Channel::from_static("https://youtube.googleapis.com")
@@ -207,15 +213,28 @@ impl YoutubeService {
 
                     match snippet.r#type() {
                         MessageType::TextMessageEvent => {
-                            let msg = snippet.display_message.as_deref().unwrap_or("<empty>");
-                            let auth = item
+                            // todo: get these properly
+                            let message = snippet
+                                .display_message
+                                .as_deref()
+                                .unwrap_or("<empty>")
+                                .to_string();
+                            let author = item
                                 .author_details
                                 .as_ref()
                                 .and_then(|d| d.display_name.as_ref())
                                 .map(String::as_str)
-                                .unwrap_or("<unknown>");
+                                .unwrap_or("<unknown>")
+                                .to_string();
+                            let timestamp = snippet.published_at.as_deref().unwrap().to_string();
 
-                            println!("{auth}: {msg}");
+                            tx.send(AppEvent::Chat(ChatMessage {
+                                author,
+                                message,
+                                kind: MessageKind::Text,
+                                timestamp,
+                            }))
+                            .await?;
                         }
                         MessageType::NewSponsorEvent => {}
                         _ => {}

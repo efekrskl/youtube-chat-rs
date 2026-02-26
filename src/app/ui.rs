@@ -4,26 +4,8 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MessageKind {
-    Text,
-    Subscription,
-}
-
-#[derive(Debug, Clone)]
-struct ChatMessage {
-    timestamp: String,
-    author: String,
-    message: String,
-    kind: MessageKind,
-}
-
-struct UiState {
-    title: String,
-    messages: Vec<ChatMessage>,
-}
-
+use crate::app::event::{ChatMessage, MessageKind};
+use crate::app::state::AppState;
 fn nick_color(name: &str) -> Color {
     let palette = [
         Color::Cyan,
@@ -41,7 +23,7 @@ fn nick_color(name: &str) -> Color {
     palette[hash % palette.len()]
 }
 
-fn draw(frame: &mut Frame, app: &UiState) {
+pub fn draw(frame: &mut Frame, app: &AppState) {
     let bg = Color::Rgb(35, 39, 65);
     let pane_border = Color::Rgb(137, 58, 255);
     let text = Color::Rgb(206, 212, 228);
@@ -181,33 +163,4 @@ fn sample_messages() -> Vec<ChatMessage> {
             kind: MessageKind::Text,
         },
     ]
-}
-
-pub fn run_ui() -> anyhow::Result<()> {
-    let mut terminal = ratatui::init();
-
-    let app = UiState {
-        title: "SomeYtChannel".to_string(),
-        messages: sample_messages(),
-    };
-
-    loop {
-        terminal.draw(|frame| draw(frame, &app))?;
-
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-
-            let is_ctrl_c =
-                key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-            let is_quit = matches!(key.code, KeyCode::Esc | KeyCode::Char('q'));
-
-            if is_ctrl_c || is_quit {
-                break;
-            }
-        }
-    }
-
-    Ok(())
 }
