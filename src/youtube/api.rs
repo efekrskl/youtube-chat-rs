@@ -1,4 +1,3 @@
-use crate::http_types::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use anyhow::{Context, bail};
@@ -8,14 +7,15 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
+use crate::youtube::models::{SearchResponse, VideoListResponse};
 
-pub struct AppClient {
+pub struct YoutubeService {
     token: String,
-    pub client: reqwest::Client,
+    pub http: reqwest::Client,
 }
 
-impl AppClient {
-    pub fn new(token: &str) -> anyhow::Result<AppClient> {
+impl YoutubeService {
+    pub fn new(token: &str) -> anyhow::Result<YoutubeService> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -28,19 +28,19 @@ impl AppClient {
 
         Ok(Self {
             token: token.to_string(),
-            client,
+            http: client,
         })
     }
 }
 
-impl AppClient {
+impl YoutubeService {
     fn auth_req(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         req.bearer_auth(&self.token)
     }
 
     async fn make_yt_req(&self, url: Url) -> anyhow::Result<String> {
         debug!("YouTube request: {}", url);
-        let res = self.auth_req(self.client.get(url)).send().await?;
+        let res = self.auth_req(self.http.get(url)).send().await?;
         let status = res.status();
         let body = res.text().await?;
         debug!("YouTube response status={} body_len={}", status, body.len());
@@ -148,8 +148,8 @@ impl AppClient {
     }
 }
 
-impl AppClient {
-    pub async fn listen(&self, live_chat_id: &str) -> anyhow::Result<()> {
+impl YoutubeService {
+    pub async fn stream_chat(&self, live_chat_id: &str) -> anyhow::Result<()> {
         debug!("listen start live_chat_id={}", live_chat_id);
         let tls = ClientTlsConfig::new().with_native_roots();
         let channel: Channel = Channel::from_static("https://youtube.googleapis.com")

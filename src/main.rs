@@ -1,11 +1,9 @@
-mod auth;
-mod client;
-mod http_types;
+mod youtube;
 
-use crate::auth::auth;
-use crate::client::AppClient;
 use dialoguer::Input;
 use log::debug;
+use crate::youtube::api::YoutubeService;
+use crate::youtube::auth::auth;
 
 pub mod youtube_api_v3 {
     tonic::include_proto!("youtube.api.v3");
@@ -17,18 +15,18 @@ async fn main() -> anyhow::Result<()> {
     debug!("application start");
 
     let token = auth().await?;
-    let app_client = AppClient::new(&token)?;
+    let yt_service = YoutubeService::new(&token)?;
     let channel_name: String = Input::new()
         .allow_empty(false)
         .with_prompt("Please enter a channel name")
         .interact_text()?;
     debug!("user input channel query: {}", channel_name);
-    let live_chat_id = app_client.find_chat_by_channel_name(&channel_name).await?;
+    let live_chat_id = yt_service.find_chat_by_channel_name(&channel_name).await?;
 
     match live_chat_id {
         Some(id) => {
             debug!("resolved live_chat_id, entering listen loop");
-            app_client.listen(&id).await
+            yt_service.stream_chat(&id).await
         }
         None => {
             debug!("no live chat id resolved");
