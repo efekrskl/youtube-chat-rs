@@ -1,11 +1,11 @@
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crate::app::event::MessageKind;
+use crate::app::state::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-use crate::app::event::{ChatMessage, MessageKind};
-use crate::app::state::AppState;
+
 fn nick_color(name: &str) -> Color {
     let palette = [
         Color::Cyan,
@@ -32,15 +32,21 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     let areas = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(frame.area());
+
+    let visible_rows = areas[0].height.saturating_sub(2) as usize;
+    let total = app.messages.len();
+    let max_scroll = total.saturating_sub(visible_rows);
+    let scroll = app.scroll_offset.min(max_scroll);
+    let end = total.saturating_sub(scroll);
+    let start = end.saturating_sub(visible_rows);
 
     let items: Vec<ListItem> = app
         .messages
         .iter()
+        .skip(start)
+        .take(end.saturating_sub(start))
         .map(|m| match m.kind {
             MessageKind::Text => {
                 let line = Line::from(vec![
@@ -88,8 +94,17 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         )
         .style(Style::default().bg(bg));
 
+    let scroll_mode = if app.auto_scroll == true {
+        "[FOLLOWING LIVE CHAT]"
+    } else {
+        "[FOLLOW DISABLED]"
+    };
+
     let help = Paragraph::new(Line::from(vec![Span::styled(
-        "[Ctrl+C] / [q]: quit",
+        format!(
+            "{} - [Up/Down/PgUp/PgDn/Home/End] scroll - [Ctrl+C]/[q] quit",
+            scroll_mode
+        ),
         Style::default().fg(Color::Rgb(106, 112, 128)),
     )]))
     .style(Style::default().bg(bg))
@@ -97,70 +112,4 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     frame.render_widget(chat, areas[0]);
     frame.render_widget(help, areas[1]);
-}
-
-// todo: remove
-fn sample_messages() -> Vec<ChatMessage> {
-    vec![
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "EliQeener".to_string(),
-            message: "hungy MYAAA".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "misfitspadel46".to_string(),
-            message: "big egg?".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "Rapfan".to_string(),
-            message: "Can you get all the pals and use them to wage war?".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "Unain".to_string(),
-            message: "You can work in your logging camp streamer".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "EliQeener".to_string(),
-            message: "subscribed for 1 months!".to_string(),
-            kind: MessageKind::Subscription,
-        },
-        ChatMessage {
-            timestamp: "14:36".to_string(),
-            author: "AverageJonas".to_string(),
-            message: "this game is so addicting".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:37".to_string(),
-            author: "Vanadin1".to_string(),
-            message: "subscribed for 29 months: cute game cute chat".to_string(),
-            kind: MessageKind::Subscription,
-        },
-        ChatMessage {
-            timestamp: "14:37".to_string(),
-            author: "EliQeener".to_string(),
-            message: "GIGATON".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:37".to_string(),
-            author: "Son_Of_Ares".to_string(),
-            message: "did the first boss respawn?".to_string(),
-            kind: MessageKind::Text,
-        },
-        ChatMessage {
-            timestamp: "14:37".to_string(),
-            author: "Strayx".to_string(),
-            message: "So how Ethical has seagull's expirence been".to_string(),
-            kind: MessageKind::Text,
-        },
-    ]
 }

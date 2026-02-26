@@ -20,16 +20,17 @@ impl App {
             state: AppState {
                 title,
                 messages: Default::default(),
-                status: "Starting...".to_string(),
+                scroll_offset: 0,
+                auto_scroll: true
             },
         }
     }
 
-    pub fn on_event(&mut self, event: AppEvent) -> bool {
+    pub fn on_event(&mut self, event: AppEvent, visible_rows: usize) -> bool {
         match event {
             AppEvent::Chat(msg) => self.state.push_message(msg),
             AppEvent::Input(key) => {
-                if self.state.handle_key(key) {
+                if self.state.handle_key(key, visible_rows) {
                     return true;
                 }
             }
@@ -48,9 +49,11 @@ impl App {
     ) -> anyhow::Result<()> {
         loop {
             terminal.draw(|f| draw(f, &self.state))?;
+            let size = terminal.size()?;
+            let visible_rows = size.height.saturating_sub(3) as usize;
 
             let Some(ev) = rx.recv().await else { break };
-            if self.on_event(ev) {
+            if self.on_event(ev, visible_rows) {
                 break;
             }
         }
