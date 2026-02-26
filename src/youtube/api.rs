@@ -226,7 +226,13 @@ impl YoutubeService {
                                 .map(String::as_str)
                                 .unwrap_or("<unknown>")
                                 .to_string();
-                            let timestamp = snippet.published_at.as_deref().unwrap().to_string();
+                            let timestamp = snippet
+                                .published_at
+                                .as_deref()
+                                .unwrap()
+                                .get(11..16)
+                                .unwrap_or("--:--")
+                                .to_string();
 
                             tx.send(AppEvent::Chat(ChatMessage {
                                 author,
