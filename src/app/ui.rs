@@ -74,6 +74,29 @@ fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
     lines
 }
 
+// todo: remove duplication?
+fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
+    match m.kind {
+        MessageKind::Text => {
+            let prefix = format!("[{}] {}: ", m.timestamp, m.author);
+            let prefix_len = prefix.chars().count();
+            let body_width = chat_width.saturating_sub(prefix_len).max(1);
+            let wrapped = textwrap::wrap(&m.message, body_width);
+            wrapped.len().max(1)
+        }
+        MessageKind::Subscription => 1,
+    }
+}
+
+pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: usize) -> usize {
+    let total_rows = app
+        .messages
+        .iter()
+        .map(|m| row_count_for_message(m, chat_width))
+        .sum::<usize>();
+    total_rows.saturating_sub(visible_rows)
+}
+
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -81,18 +104,11 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .split(frame.area());
 
     let visible_rows = areas[0].height.saturating_sub(2) as usize;
-    let total = app.messages.len();
-    let max_scroll = total.saturating_sub(visible_rows);
-    let scroll = app.scroll_offset.min(max_scroll);
-    let end = total.saturating_sub(scroll);
-    let start = end.saturating_sub(visible_rows);
     let chat_width = areas[0].width.saturating_sub(2) as usize;
 
-    let items: Vec<ListItem> = app
+    let all_rows: Vec<ListItem> = app
         .messages
         .iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
         .flat_map(|m| match m.kind {
             MessageKind::Text => {
                 let lines = build_lines(m, chat_width);
@@ -119,6 +135,17 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         })
         .collect();
 
+    let total_rows = all_rows.len();
+    let max_scroll = max_scroll_for_viewport(app, chat_width, visible_rows);
+    let scroll = app.scroll_state.scroll_offset.min(max_scroll);
+    let end = total_rows.saturating_sub(scroll);
+    let start = end.saturating_sub(visible_rows);
+    let items: Vec<ListItem> = all_rows
+        .into_iter()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect();
+
     let chat = List::new(items)
         .block(
             Block::default()
@@ -129,7 +156,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         )
         .style(Style::default().bg(COLOR_BG));
 
-    let scroll_mode = if app.auto_scroll == true {
+    let scroll_mode = if app.scroll_state.auto_scroll == true {
         "[FOLLOWING LIVE CHAT]"
     } else {
         "[FOLLOW DISABLED]"
