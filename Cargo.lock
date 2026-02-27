@@ -3605,7 +3605,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yt-chat"
+name = "youtube-chat-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
