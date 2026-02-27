@@ -164,7 +164,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     let help = Paragraph::new(Line::from(vec![Span::styled(
         format!(
-            "{} - [Up/Down/PgUp/PgDn/Home/End] scroll - [Ctrl+C]/[q] quit",
+            "{} - [Up/Down/PgUp/PgDn/Home/End] scroll - [ESC/q] quit",
             scroll_mode
         ),
         Style::default().fg(Color::Rgb(106, 112, 128)),

@@ -44,7 +44,7 @@ impl AppState {
         self.scroll_state.scroll_offset = self.scroll_state.scroll_offset.saturating_sub(amount);
     }
 
-    pub fn update_scroll_metrics(&mut self, visible_rows: usize, max_scroll_rows: usize) {
+    pub fn update_scroll_state(&mut self, visible_rows: usize, max_scroll_rows: usize) {
         self.scroll_state.visible_rows = visible_rows;
         self.scroll_state.max_scroll_rows = max_scroll_rows;
         self.scroll_state.scroll_offset = self

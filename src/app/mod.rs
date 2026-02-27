@@ -57,7 +57,7 @@ impl App {
             let visible_rows = size.height.saturating_sub(3) as usize;
             let chat_width = size.width.saturating_sub(2) as usize;
             let max_scroll = max_scroll_for_viewport(&self.state, chat_width, visible_rows);
-            self.state.update_scroll_metrics(visible_rows, max_scroll);
+            self.state.update_scroll_state(visible_rows, max_scroll);
 
             let Some(ev) = rx.recv().await else { break };
             if self.on_event(ev) {
