@@ -1,19 +1,39 @@
 mod app;
 mod input_task;
 mod youtube;
+mod stats_task;
 
-use std::process::exit;
+use clap::ArgGroup;
+use clap::Parser;
 use crate::app::App;
 use crate::input_task::spawn_input_task;
 use crate::youtube::api::YoutubeService;
 use crate::youtube::auth::auth;
 use crate::youtube::spawn_youtube_chat_task;
-use dialoguer::Input;
 use log::debug;
 use tokio::sync::mpsc;
+use crate::stats_task::spawn_stats_task;
 
 pub mod youtube_api_v3 {
     tonic::include_proto!("youtube.api.v3");
+}
+#[derive(Parser, Debug)]
+#[command(
+    name = "ytc",
+    group(
+        ArgGroup::new("input")
+            .required(true)
+            .args(["video", "channel"])
+    )
+)]
+struct Args {
+    /// Video ID
+    #[arg(short = 'v', long = "video")]
+    video: Option<String>,
+
+    /// Channel Name
+    #[arg(short = 'c', long = "channel")]
+    channel: Option<String>,
 }
 
 #[tokio::main]
@@ -23,33 +43,27 @@ async fn main() -> anyhow::Result<()> {
 
     let token = auth().await?;
     let yt_service = YoutubeService::new(&token)?;
-    let channel_name: String = Input::new()
-        .allow_empty(false)
-        .with_prompt("Please enter a channel name")
-        .interact_text()?;
-    debug!("user input channel query: {}", channel_name);
-    let live_chat_id = yt_service.find_chat_by_channel_name(&channel_name).await?;
-
-    match live_chat_id {
-        Some(id) => {
-            debug!("resolved live_chat_id, entering listen loop");
-            let mut terminal = ratatui::init();
-            let (tx, rx) = mpsc::channel(100);
-
-            spawn_input_task(tx.clone());
-            spawn_youtube_chat_task(yt_service, id, tx);
-
-            let app = App::new(channel_name);
-
-            app.run(&mut terminal, rx).await?;
-            ratatui::restore();
-            exit(0);
+    let args = Args::parse();
+    let video_id = match (args.video, args.channel) {
+        (Some(video_id), None) => video_id,
+        (None, Some(channel_name)) => {
+            yt_service.find_video_id_by_channel_name(&channel_name).await?
         }
-        None => {
-            debug!("no live chat id resolved");
-            eprintln!("Couldn't find live chat id.");
-
-            Ok(())
+        _ => {
+            unreachable!("Please pass either --video or --chanel")
         }
-    }
+    };
+    let live_video = yt_service.find_live_video_details_by_video_id(&video_id).await?;
+
+    let mut terminal = ratatui::init();
+    let (tx, rx) = mpsc::channel(100);
+
+    spawn_input_task(tx.clone());
+    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx);
+
+    let app = App::new(live_video.channel_name);
+
+    app.run(&mut terminal, rx).await?;
+    ratatui::restore();
+    Ok(())
 }

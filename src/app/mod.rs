@@ -46,18 +46,27 @@ impl App {
         false
     }
 
+    async fn handle_tui(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> anyhow::Result<()> {
+        terminal.draw(|f| draw(f, &self.state))?;
+        let size = terminal.size()?;
+        let visible_rows = size.height.saturating_sub(3) as usize;
+        let chat_width = size.width.saturating_sub(2) as usize;
+        let max_scroll = max_scroll_for_viewport(&self.state, chat_width, visible_rows);
+        self.state.update_scroll_state(visible_rows, max_scroll);
+
+        Ok(())
+    }
+
     pub async fn run(
         mut self,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         mut rx: mpsc::Receiver<AppEvent>,
     ) -> anyhow::Result<()> {
         loop {
-            terminal.draw(|f| draw(f, &self.state))?;
-            let size = terminal.size()?;
-            let visible_rows = size.height.saturating_sub(3) as usize;
-            let chat_width = size.width.saturating_sub(2) as usize;
-            let max_scroll = max_scroll_for_viewport(&self.state, chat_width, visible_rows);
-            self.state.update_scroll_state(visible_rows, max_scroll);
+            self.handle_tui(terminal).await?;
 
             let Some(ev) = rx.recv().await else { break };
             if self.on_event(ev) {

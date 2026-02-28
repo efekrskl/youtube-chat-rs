@@ -7,7 +7,13 @@ pub enum AppEvent {
     Chat(ChatMessage),
     Status(StatusEvent),
     Error(String),
+    StatsUpdate(StatsMessage),
     Quit,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatsMessage {
+    pub viewer_count: u32,
 }
 
 #[derive(Debug, Clone)]

@@ -11,9 +11,15 @@ use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
 
+#[derive(Clone)]
 pub struct YoutubeService {
     token: String,
     pub http: reqwest::Client,
+}
+
+pub struct LiveVideoDetails {
+    pub chat_id: String,
+    pub channel_name: String,
 }
 
 impl YoutubeService {
@@ -107,8 +113,75 @@ impl YoutubeService {
     async fn find_chat_id_by_live_video_id(
         &self,
         live_video_id: &str,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<LiveVideoDetails>> {
         debug!("resolving live chat by video_id={}", live_video_id);
+        let mut url = Url::parse("https://www.googleapis.com/youtube/v3/videos")?;
+        url.query_pairs_mut()
+            .append_pair("part", "liveStreamingDetails,snippet")
+            .append_pair("id", &live_video_id);
+
+        let body = self.make_yt_req(url).await?;
+        let parsed: VideoListResponse = serde_json::from_str(&body)
+            .context("Failed to parse search response (channel lookup)")?;
+
+        let item = parsed.items.get(0);
+        let chat_id = item
+            .and_then(|v| v.live_streaming_details.as_ref())
+            .and_then(|d| d.active_live_chat_id.clone());
+        let channel_name = item
+            .and_then(|v| v.snippet.as_ref())
+            .and_then(|snippet| snippet.channel_title.clone());
+        debug!(
+            "live chat lookup result chat_id={:?} channel_name={:?}",
+            chat_id, channel_name
+        );
+
+        match (chat_id, channel_name) {
+            (Some(chat_id), Some(channel_name)) => Ok(Some(LiveVideoDetails {
+                chat_id,
+                channel_name,
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn find_video_id_by_channel_name(
+        &self,
+        channel_name: &str,
+    ) -> anyhow::Result<String> {
+        let Some(channel_id) = self.channel_id_by_name(channel_name).await? else {
+            bail!("Couldn't find channel name");
+        };
+        debug!("resolved channel_id={}", channel_id);
+
+        let Some(live_stream_id) = self.live_video_id_by_channel_id(&channel_id).await? else {
+            bail!("Couldn't find live stream id");
+        };
+        debug!("resolved live_stream_id={}", live_stream_id);
+
+        Ok(live_stream_id)
+    }
+
+    pub async fn find_live_video_details_by_video_id(
+        &self,
+        live_stream_id: &str,
+    ) -> anyhow::Result<LiveVideoDetails> {
+        let Some(details) = self.find_chat_id_by_live_video_id(&live_stream_id).await? else {
+            bail!("Couldn't find live chat id");
+        };
+        debug!(
+            "resolved chat_id={} channel_name={}",
+            details.chat_id, details.channel_name
+        );
+
+        Ok(details)
+    }
+
+    pub async fn get_viewer_count_by_video_id(
+        &self,
+        live_video_id: &str,
+    ) -> anyhow::Result<String> {
+        debug!("resolving viewer count by video_id={}", live_video_id);
         let mut url = Url::parse("https://www.googleapis.com/youtube/v3/videos")?;
         url.query_pairs_mut()
             .append_pair("part", "liveStreamingDetails")
@@ -118,35 +191,14 @@ impl YoutubeService {
         let parsed: VideoListResponse = serde_json::from_str(&body)
             .context("Failed to parse search response (channel lookup)")?;
 
-        let chat_id = parsed
+        let viewer_count = parsed
             .items
             .get(0)
             .and_then(|v| v.live_streaming_details.as_ref())
-            .and_then(|d| d.active_live_chat_id.clone());
-        debug!("live chat lookup result={:?}", chat_id);
+            .and_then(|d| d.concurrent_viewers.clone());
+        debug!("live chat lookup result={:?}", viewer_count);
 
-        Ok(chat_id)
-    }
-
-    pub async fn find_chat_by_channel_name(
-        &self,
-        channel_name: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let Some(channel_id) = self.channel_id_by_name(channel_name).await? else {
-            debug!("no channel_id found");
-            return Ok(None);
-        };
-        debug!("resolved channel_id={}", channel_id);
-
-        let Some(live_stream_id) = self.live_video_id_by_channel_id(&channel_id).await? else {
-            debug!("no live video found for channel_id={}", channel_id);
-            return Ok(None);
-        };
-        debug!("resolved live_stream_id={}", live_stream_id);
-
-        let chat_id = self.find_chat_id_by_live_video_id(&live_stream_id).await?;
-        debug!("resolved chat_id={:?}", chat_id);
-        Ok(chat_id)
+        Ok(viewer_count.unwrap_or("0".to_string()))
     }
 }
 
