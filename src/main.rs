@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
             yt_service.find_video_id_by_channel_name(&channel_name).await?
         }
         _ => {
-            unreachable!("Please pass either --video or --chanel")
+            unreachable!("Please pass either --video-id or --chanel-name")
         }
     };
     let live_video = yt_service.find_live_video_details_by_video_id(&video_id).await?;
