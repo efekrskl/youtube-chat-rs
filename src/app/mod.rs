@@ -1,10 +1,10 @@
-use std::io::Stdout;
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
-use tokio::sync::mpsc;
 use crate::app::event::AppEvent;
-use crate::app::state::{AppState, ScrollState};
+use crate::app::state::{AppState, ScrollState, Stats};
 use crate::app::ui::{draw, max_scroll_for_viewport};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use std::io::Stdout;
+use tokio::sync::mpsc;
 
 pub mod event;
 pub mod state;
@@ -25,7 +25,8 @@ impl App {
                     auto_scroll: true,
                     visible_rows: 1,
                     max_scroll_rows: 0,
-                }
+                },
+                stats: Stats { viewer_count: 0 },
             },
         }
     }
@@ -38,6 +39,7 @@ impl App {
                     return true;
                 }
             }
+            AppEvent::StatsUpdate(stats) => self.state.update_stats(stats.viewer_count),
             _ => {
                 // todo
             }

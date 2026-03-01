@@ -149,7 +149,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let chat = List::new(items)
         .block(
             Block::default()
-                .title(app.title.clone())
+                .title(format!(" {} - Viewers: {} ", app.title.clone(), app.stats.viewer_count))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(COLOR_BORDER))
                 .style(Style::default().bg(COLOR_BG)),

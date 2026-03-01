@@ -8,12 +8,16 @@ pub struct ScrollState {
     pub visible_rows: usize,
     pub max_scroll_rows: usize,
 }
+
+pub struct Stats {
+    pub viewer_count: u32
+}
 pub struct AppState {
     pub title: String,
     pub messages: VecDeque<ChatMessage>,
     // todo: pub status: String,
-    // todo: viewer_count: Option<u16>
     pub scroll_state: ScrollState,
+    pub stats: Stats
 }
 
 const MAX_MESSAGES: usize = 500;
@@ -51,6 +55,10 @@ impl AppState {
             .scroll_state
             .scroll_offset
             .min(self.scroll_state.max_scroll_rows);
+    }
+
+    pub fn update_stats(&mut self, viewer_count: u32) {
+        self.stats.viewer_count = viewer_count;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
