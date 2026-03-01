@@ -1,15 +1,20 @@
 use crate::app::event::{AppEvent, ChatMessage, MessageKind};
+use crate::app::state::{AVATAR_HEIGHT, AVATAR_WIDTH};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use anyhow::{Context, bail};
+use image::load_from_memory;
 use log::debug;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
+use ratatui::layout::Rect;
+use ratatui_image::{FilterType, Resize, picker::Picker, protocol::Protocol};
 
 #[derive(Clone)]
 pub struct YoutubeService {
@@ -203,9 +208,25 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
+    async fn fetch_avatar_protocol(&self, avatar_url: &str, picker: &Picker) -> Option<Protocol> {
+        let bytes = reqwest::get(avatar_url).await.ok()?.bytes().await.ok()?;
+        let image = load_from_memory(&bytes).ok()?;
+
+        picker
+            .new_protocol(
+                image,
+                Rect::new(0, 0, AVATAR_WIDTH, AVATAR_HEIGHT),
+                Resize::Fit(Some(FilterType::Lanczos3)),
+            )
+            .ok()
+    }
+}
+
+impl YoutubeService {
     pub async fn stream_chat(
         &self,
         live_chat_id: &str,
+        picker: Picker,
         tx: mpsc::Sender<AppEvent>,
     ) -> anyhow::Result<()> {
         debug!("listen start live_chat_id={}", live_chat_id);
@@ -220,6 +241,7 @@ impl YoutubeService {
 
         let mut next_page_token: Option<String> = None;
         let mut poll_cycle: usize = 0;
+        let mut avatar_cache: HashMap<String, Option<Protocol>> = HashMap::new();
 
         loop {
             poll_cycle += 1;
@@ -278,6 +300,18 @@ impl YoutubeService {
                                 .map(String::as_str)
                                 .unwrap_or("<unknown>")
                                 .to_string();
+                            let avatar = item
+                                .author_details
+                                .as_ref()
+                                .and_then(|d| d.profile_image_url.as_deref())
+                                .map(str::to_string)
+                                .and_then(|url| {
+                                    if let Some(cached) = avatar_cache.get(&url) {
+                                        return cached.clone();
+                                    }
+
+                                    None
+                                });
                             let timestamp = snippet
                                 .published_at
                                 .as_deref()
@@ -285,10 +319,25 @@ impl YoutubeService {
                                 .get(11..16)
                                 .unwrap_or("--:--")
                                 .to_string();
+                            let avatar = match (
+                                avatar,
+                                item.author_details
+                                    .as_ref()
+                                    .and_then(|d| d.profile_image_url.as_deref()),
+                            ) {
+                                (Some(protocol), _) => Some(protocol),
+                                (None, Some(url)) => {
+                                    let protocol = self.fetch_avatar_protocol(url, &picker).await;
+                                    avatar_cache.insert(url.to_string(), protocol.clone());
+                                    protocol
+                                }
+                                (None, None) => None,
+                            };
 
                             tx.send(AppEvent::Chat(ChatMessage {
                                 author,
                                 message,
+                                avatar,
                                 kind: MessageKind::Text,
                                 timestamp,
                             }))

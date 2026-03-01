@@ -2,6 +2,10 @@ use crate::app::event::ChatMessage;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::VecDeque;
 
+pub const AVATAR_WIDTH: u16 = 2;
+pub const AVATAR_HEIGHT: u16 = 1;
+pub const AVATAR_GAP: u16 = 1;
+
 pub struct ScrollState {
     pub scroll_offset: usize,
     pub auto_scroll: bool,

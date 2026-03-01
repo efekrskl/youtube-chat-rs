@@ -11,12 +11,26 @@ use crate::youtube::api::YoutubeService;
 use crate::youtube::auth::auth;
 use crate::youtube::spawn_youtube_chat_task;
 use log::debug;
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use ratatui_image::picker::{Picker, ProtocolType};
+use std::io::stdout;
 use tokio::sync::mpsc;
 use crate::stats_task::spawn_stats_task;
 
 pub mod youtube_api_v3 {
     tonic::include_proto!("youtube.api.v3");
 }
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "ytc",
@@ -55,16 +69,27 @@ async fn main() -> anyhow::Result<()> {
     };
     let live_video = yt_service.find_live_video_details_by_video_id(&video_id).await?;
 
-    let mut terminal = ratatui::init();
+    enable_raw_mode()?;
+    let _raw_mode_guard = RawModeGuard;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+    let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    if std::env::var("TERM_PROGRAM")
+        .map(|value| value.contains("iTerm"))
+        .unwrap_or(false)
+    {
+        picker.set_protocol_type(ProtocolType::Iterm2);
+    }
     let (tx, rx) = mpsc::channel(100);
 
     spawn_input_task(tx.clone());
     spawn_stats_task(video_id, yt_service.clone(), tx.clone());
-    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx);
+    spawn_youtube_chat_task(yt_service, live_video.chat_id, picker, tx);
 
     let app = App::new(live_video.channel_name);
 
     app.run(&mut terminal, rx).await?;
-    ratatui::restore();
+    terminal.show_cursor()?;
     Ok(())
 }

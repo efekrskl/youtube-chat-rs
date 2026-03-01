@@ -1,10 +1,11 @@
 use crate::app::event::{ChatMessage, MessageKind};
-use crate::app::state::AppState;
+use crate::app::state::{AVATAR_GAP, AVATAR_HEIGHT, AVATAR_WIDTH, AppState};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui_image::Image;
 
 const COLOR_BG: Color = Color::Rgb(35, 39, 65);
 const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
@@ -37,8 +38,8 @@ fn nick_color(name: &str) -> Color {
     palette[hash % palette.len()]
 }
 
-fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
-    ListItem::new(Line::from(vec![
+fn build_original_line(text: String, m: &ChatMessage) -> Line<'static> {
+    Line::from(vec![
         Span::styled(
             format!("[{}]", m.timestamp),
             Style::default().fg(COLOR_TEXT_MUTED),
@@ -52,20 +53,19 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
         ),
         Span::raw(" "),
         Span::styled(text, Style::default().fg(COLOR_TEXT)),
-    ]))
+    ])
 }
 
-fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
+fn build_lines(m: &ChatMessage, text_width: usize) -> Vec<Line<'static>> {
     let prefix = format!("[{}] {}: ", m.timestamp, m.author);
     let prefix_len = prefix.chars().count();
-    let body_width = chat_width.saturating_sub(prefix_len).max(1);
+    let body_width = text_width.saturating_sub(prefix_len).max(1);
     let wrapped = textwrap::wrap(&m.message, body_width);
 
     let mut lines = Vec::with_capacity(wrapped.len().max(1));
 
     if wrapped.is_empty() {
         lines.push(build_original_line(m.message.clone(), m));
-
         return lines;
     }
 
@@ -73,26 +73,52 @@ fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
     let indent = " ".repeat(prefix_len);
 
     for part in wrapped.iter().skip(1) {
-        lines.push(ListItem::new(Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled(indent.clone(), Style::default().fg(COLOR_TEXT)),
             Span::styled(part.to_string(), Style::default().fg(COLOR_TEXT)),
-        ])));
+        ]));
     }
 
     lines
 }
 
-// todo: remove duplication?
-fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
+fn build_subscription_lines(m: &ChatMessage) -> Vec<Line<'static>> {
+    vec![Line::from(vec![
+        Span::styled(
+            format!(" {} ", m.author),
+            Style::default()
+                .fg(nick_color(&m.author))
+                .bg(COLOR_SUB_BG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{} ", m.message),
+            Style::default().fg(COLOR_TEXT).bg(COLOR_SUB_BG),
+        ),
+    ])]
+}
+
+fn lines_for_message(m: &ChatMessage, chat_width: usize) -> Vec<Line<'static>> {
+    let text_width = if m.avatar.is_some() {
+        chat_width
+            .saturating_sub((AVATAR_WIDTH + AVATAR_GAP) as usize)
+            .max(1)
+    } else {
+        chat_width.max(1)
+    };
+
     match m.kind {
-        MessageKind::Text => {
-            let prefix = format!("[{}] {}: ", m.timestamp, m.author);
-            let prefix_len = prefix.chars().count();
-            let body_width = chat_width.saturating_sub(prefix_len).max(1);
-            let wrapped = textwrap::wrap(&m.message, body_width);
-            wrapped.len().max(1)
-        }
-        MessageKind::Subscription => 1,
+        MessageKind::Text => build_lines(m, text_width),
+        MessageKind::Subscription => build_subscription_lines(m),
+    }
+}
+
+fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
+    let text_rows = lines_for_message(m, chat_width).len();
+    if m.avatar.is_some() {
+        text_rows.max(AVATAR_HEIGHT as usize)
+    } else {
+        text_rows.max(1)
     }
 }
 
@@ -119,6 +145,79 @@ pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: 
     total_rows.saturating_sub(visible_rows)
 }
 
+fn visible_messages(
+    app: &AppState,
+    chat_width: usize,
+    visible_rows: usize,
+) -> Vec<(&ChatMessage, Vec<Line<'static>>, usize)> {
+    let mut remaining_scroll = app.scroll_state.scroll_offset;
+    let mut used_rows = 0usize;
+    let mut visible = Vec::new();
+
+    for message in app.messages.iter().rev() {
+        let lines = lines_for_message(message, chat_width);
+        let height = row_count_for_message(message, chat_width);
+
+        if remaining_scroll >= height {
+            remaining_scroll -= height;
+            continue;
+        }
+
+        if remaining_scroll > 0 {
+            remaining_scroll = 0;
+            continue;
+        }
+
+        if used_rows + height > visible_rows {
+            break;
+        }
+
+        used_rows += height;
+        visible.push((message, lines, height));
+    }
+
+    visible.reverse();
+    visible
+}
+
+fn render_message(frame: &mut Frame, area: Rect, message: &ChatMessage, lines: &[Line<'static>]) {
+    if let Some(avatar) = message.avatar.as_ref() {
+        let [avatar_area, gap_area, text_area] = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(AVATAR_WIDTH),
+                Constraint::Length(AVATAR_GAP),
+                Constraint::Min(1),
+            ])
+            .areas(area);
+
+        let image_height = avatar_area.height.min(AVATAR_HEIGHT);
+        let centered_y = avatar_area.y + avatar_area.height.saturating_sub(image_height) / 2;
+        let image_area = Rect::new(avatar_area.x, centered_y, avatar_area.width, image_height);
+        frame.render_widget(Image::new(avatar), image_area);
+        frame.render_widget(
+            Paragraph::new(lines.to_vec())
+                .style(Style::default().bg(COLOR_BG))
+                .wrap(Wrap { trim: false }),
+            text_area,
+        );
+        frame.render_widget(
+            Paragraph::new("")
+                .style(Style::default().bg(COLOR_BG))
+                .wrap(Wrap { trim: false }),
+            gap_area,
+        );
+        return;
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines.to_vec())
+            .style(Style::default().bg(COLOR_BG))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -128,57 +227,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let visible_rows = areas[0].height.saturating_sub(2) as usize;
     let chat_width = areas[0].width.saturating_sub(2) as usize;
 
-    let all_rows: Vec<ListItem> = app
-        .messages
-        .iter()
-        .flat_map(|m| match m.kind {
-            MessageKind::Text => {
-                let lines = build_lines(m, chat_width);
-
-                lines
-            }
-            MessageKind::Subscription => {
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!(" {} ", m.author),
-                        Style::default()
-                            .fg(nick_color(&m.author))
-                            .bg(COLOR_SUB_BG)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("{} ", m.message),
-                        Style::default().fg(COLOR_TEXT).bg(COLOR_SUB_BG),
-                    ),
-                ]);
-
-                vec![ListItem::new(line)]
-            }
-        })
-        .collect();
-
-    let total_rows = all_rows.len();
-    let max_scroll = max_scroll_for_viewport(app, chat_width, visible_rows);
-    let scroll = app.scroll_state.scroll_offset.min(max_scroll);
-    let end = total_rows.saturating_sub(scroll);
-    let start = end.saturating_sub(visible_rows);
-    let items: Vec<ListItem> = all_rows
-        .into_iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .collect();
-
-    let chat = List::new(items)
-        .block(
-            Block::default()
-                .title(build_title(app))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(COLOR_BORDER))
-                .style(Style::default().bg(COLOR_BG)),
-        )
-        .style(Style::default().bg(COLOR_BG));
-
-    let scroll_mode = if app.scroll_state.auto_scroll == true {
+    let scroll_mode = if app.scroll_state.auto_scroll {
         "[FOLLOWING LIVE CHAT]"
     } else {
         "[FOLLOW DISABLED]"
@@ -194,6 +243,25 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     .style(Style::default().bg(COLOR_BG))
     .wrap(Wrap { trim: true });
 
-    frame.render_widget(chat, areas[0]);
+    let chat_block = Block::default()
+        .title(build_title(app))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(COLOR_BORDER))
+        .style(Style::default().bg(COLOR_BG));
+    let inner = chat_block.inner(areas[0]);
+    frame.render_widget(chat_block, areas[0]);
+
+    let visible = visible_messages(app, chat_width, visible_rows);
+    let used_rows = visible.iter().map(|(_, _, height)| *height).sum::<usize>();
+    let mut y = inner
+        .y
+        .saturating_add(inner.height.saturating_sub(used_rows as u16));
+
+    for (message, lines, height) in visible {
+        let message_area = Rect::new(inner.x, y, inner.width, height as u16);
+        render_message(frame, message_area, message, &lines);
+        y = y.saturating_add(height as u16);
+    }
+
     frame.render_widget(help, areas[1]);
 }
