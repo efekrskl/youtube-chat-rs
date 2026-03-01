@@ -28,11 +28,11 @@ pub mod youtube_api_v3 {
 )]
 struct Args {
     /// Video ID
-    #[arg(short = 'v', long = "video")]
+    #[arg(short = 'v', long = "video-id")]
     video: Option<String>,
 
     /// Channel Name
-    #[arg(short = 'c', long = "channel")]
+    #[arg(short = 'c', long = "channel-name")]
     channel: Option<String>,
 }
 
