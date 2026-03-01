@@ -7,13 +7,19 @@ use tokio::sync::mpsc;
 pub fn spawn_input_task(tx: mpsc::Sender<AppEvent>) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         loop {
+            if tx.is_closed() {
+                break;
+            }
+
             if event::poll(Duration::from_millis(50)).unwrap_or(false) {
                 if let Ok(Event::Key(key)) = event::read() {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
 
-                    let _ = tx.blocking_send(AppEvent::Input(key));
+                    if tx.blocking_send(AppEvent::Input(key)).is_err() {
+                        break;
+                    }
                 }
             }
         }
