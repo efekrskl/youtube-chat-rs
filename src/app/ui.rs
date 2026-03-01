@@ -7,21 +7,29 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 const COLOR_BG: Color = Color::Rgb(35, 39, 65);
-const COLOR_BORDER: Color = Color::Rgb(137, 58, 255);
+const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
 
 fn nick_color(name: &str) -> Color {
     let palette = [
-        Color::Cyan,
-        Color::Green,
-        Color::LightBlue,
-        Color::LightRed,
-        Color::LightMagenta,
-        Color::Yellow,
-        Color::LightCyan,
-        Color::LightGreen,
+        Color::Rgb(103, 232, 249),
+        Color::Rgb(125, 211, 252),
+        Color::Rgb(147, 197, 253),
+        Color::Rgb(196, 181, 253),
+        Color::Rgb(216, 180, 254),
+        Color::Rgb(249, 168, 212),
+        Color::Rgb(253, 164, 175),
+        Color::Rgb(251, 146, 60),
+        Color::Rgb(250, 204, 21),
+        Color::Rgb(190, 242, 100),
+        Color::Rgb(110, 231, 183),
+        Color::Rgb(45, 212, 191),
+        Color::Rgb(244, 114, 182),
+        Color::Rgb(251, 191, 36),
+        Color::Rgb(52, 211, 153),
+        Color::Rgb(129, 140, 248),
     ];
     let hash = name.bytes().fold(0usize, |acc, b| {
         acc.wrapping_mul(31).wrapping_add(b as usize)
@@ -88,6 +96,20 @@ fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
     }
 }
 
+fn build_title(app: &AppState) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("[ ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled("Channel", Style::default().fg(COLOR_BORDER)),
+        Span::styled(": ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled(app.title.clone(), Style::default().fg(COLOR_TEXT)),
+        Span::styled(" ] - [ ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled("Viewers", Style::default().fg(COLOR_BORDER)),
+        Span::styled(": ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled(app.stats.viewer_count.to_string(), Style::default().fg(COLOR_TEXT)),
+        Span::styled(" ]", Style::default().fg(COLOR_TEXT_MUTED)),
+    ])
+}
+
 pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: usize) -> usize {
     let total_rows = app
         .messages
@@ -149,7 +171,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let chat = List::new(items)
         .block(
             Block::default()
-                .title(format!(" {} - Viewers: {} ", app.title.clone(), app.stats.viewer_count))
+                .title(build_title(app))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(COLOR_BORDER))
                 .style(Style::default().bg(COLOR_BG)),
