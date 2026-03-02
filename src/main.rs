@@ -11,6 +11,7 @@ use crate::youtube::api::YoutubeService;
 use crate::youtube::auth::auth;
 use crate::youtube::spawn_youtube_chat_task;
 use log::debug;
+use ratatui_image::picker::{Picker, ProtocolType};
 use tokio::sync::mpsc;
 use crate::stats_task::spawn_stats_task;
 
@@ -58,11 +59,20 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     let (tx, rx) = mpsc::channel(100);
 
+    let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    if std::env::var("TERM_PROGRAM")
+        .map(|value| value.contains("iTerm"))
+        .unwrap_or(false)
+    {
+        picker.set_protocol_type(ProtocolType::Iterm2);
+    }
+
     spawn_input_task(tx.clone());
     spawn_stats_task(video_id, yt_service.clone(), tx.clone());
-    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx);
+    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx, picker.clone());
 
-    let app = App::new(live_video.channel_name);
+    let app = App::new(live_video.channel_name, picker);
+
 
     app.run(&mut terminal, rx).await?;
     ratatui::restore();

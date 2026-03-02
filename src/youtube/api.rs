@@ -3,9 +3,16 @@ use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use anyhow::{Context, bail};
+use image::imageops::FilterType;
+use image::load_from_memory;
 use log::debug;
+use ratatui::layout::Rect;
+use ratatui_image::Resize;
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::Protocol;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use std::fs;
 use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -203,10 +210,28 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
+    async fn fetch_avatar(picker: &Picker) -> Option<Protocol> {
+        // todo: actually fetch image :-)
+        let img = fs::read("./img.png").unwrap();
+        let image = load_from_memory(&img).unwrap();
+
+        // todo: avatar_width/height constants
+        let protocol = picker
+            .new_protocol(
+                image,
+                Rect::new(0, 0, 2, 1),
+                Resize::Fit(Some(FilterType::Lanczos3)),
+            )
+            .ok();
+
+        protocol
+    }
+
     pub async fn stream_chat(
         &self,
         live_chat_id: &str,
         tx: mpsc::Sender<AppEvent>,
+        picker: Picker,
     ) -> anyhow::Result<()> {
         debug!("listen start live_chat_id={}", live_chat_id);
         let tls = ClientTlsConfig::new().with_native_roots();
@@ -286,11 +311,13 @@ impl YoutubeService {
                                 .unwrap_or("--:--")
                                 .to_string();
 
+                            let avatar = Self::fetch_avatar(&picker).await;
                             tx.send(AppEvent::Chat(ChatMessage {
                                 author,
                                 message,
                                 kind: MessageKind::Text,
                                 timestamp,
+                                avatar,
                             }))
                             .await?;
                         }

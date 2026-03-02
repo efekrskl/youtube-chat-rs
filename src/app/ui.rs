@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, Paragraph, Wrap};
+use ratatui_image::Image;
 
 const COLOR_BG: Color = Color::Rgb(35, 39, 65);
 const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
@@ -202,6 +203,13 @@ fn render_message(frame: &mut Frame, area: Rect, message: &ChatMessage, lines: &
             Constraint::Min(1),
         ])
         .areas(area);
+
+    if let Some(avatar) = message.avatar.as_ref() {
+        let image_height = avatar_area.height.min(AVATAR_HEIGHT as u16);
+        let centered_y = avatar_area.y + avatar_area.height.saturating_sub(image_height) / 2;
+        let image_area = Rect::new(avatar_area.x, centered_y, avatar_area.width, image_height);
+        frame.render_widget(Image::new(&avatar), image_area);
+    }
 
     frame.render_widget(
         Paragraph::new(lines.to_vec())
