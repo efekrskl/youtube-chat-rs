@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui_image::protocol::Protocol;
 
@@ -23,7 +24,7 @@ pub struct ChatMessage {
     pub author: String,
     pub message: String,
     pub kind: MessageKind,
-    pub avatar: Option<Protocol>,
+    pub avatar: Option<Arc<Protocol>>,
 }
 
 impl std::fmt::Debug for ChatMessage {

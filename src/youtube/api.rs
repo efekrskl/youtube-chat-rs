@@ -12,7 +12,9 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::Protocol;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -210,12 +212,10 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
-    async fn fetch_avatar(picker: &Picker) -> Option<Protocol> {
-        // todo: actually fetch image :-)
-        let img = fs::read("./img.png").unwrap();
-        let image = load_from_memory(&img).unwrap();
+    async fn fetch_avatar(picker: &Picker, avatar_url: &str) -> Option<Protocol> {
+        let bytes = reqwest::get(avatar_url).await.ok()?.bytes().await.ok()?;
+        let image = load_from_memory(&bytes).unwrap();
 
-        // todo: avatar_width/height constants
         let protocol = picker
             .new_protocol(
                 image,
@@ -245,6 +245,7 @@ impl YoutubeService {
 
         let mut next_page_token: Option<String> = None;
         let mut poll_cycle: usize = 0;
+        let mut avatar_cache: HashMap<String, Arc<Protocol>> = HashMap::new();
 
         loop {
             poll_cycle += 1;
@@ -310,8 +311,24 @@ impl YoutubeService {
                                 .get(11..16)
                                 .unwrap_or("--:--")
                                 .to_string();
+                            let avatar = if let Some(url) = item
+                                .author_details
+                                .as_ref()
+                                .and_then(|d| d.profile_image_url.as_deref())
+                            {
+                                if let Some(cached_avatar) = avatar_cache.get(url) {
+                                    Some(Arc::clone(cached_avatar))
+                                } else {
+                                    let protocol = Self::fetch_avatar(&picker, url).await.map(Arc::new);
+                                    if let Some(ref avatar) = protocol {
+                                        avatar_cache.insert(url.to_string(), Arc::clone(avatar));
+                                    }
+                                    protocol
+                                }
+                            } else {
+                                None
+                            };
 
-                            let avatar = Self::fetch_avatar(&picker).await;
                             tx.send(AppEvent::Chat(ChatMessage {
                                 author,
                                 message,
@@ -319,7 +336,7 @@ impl YoutubeService {
                                 timestamp,
                                 avatar,
                             }))
-                            .await?;
+                                .await?;
                         }
                         MessageType::NewSponsorEvent => {}
                         _ => {}
