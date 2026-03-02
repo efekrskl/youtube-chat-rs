@@ -1,10 +1,11 @@
 use crate::app::event::{ChatMessage, MessageKind};
 use crate::app::state::AppState;
+use crate::app::{AVATAR_GAP, AVATAR_HEIGHT, AVATAR_WIDTH};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui_image::Image;
 
 const COLOR_BG: Color = Color::Rgb(35, 39, 65);
@@ -12,10 +13,6 @@ const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
-
-const AVATAR_WIDTH: usize = 2;
-const AVATAR_HEIGHT: usize = 1;
-const AVATAR_GAP: usize = 1;
 
 fn nick_color(name: &str) -> Color {
     let palette = [
@@ -42,7 +39,7 @@ fn nick_color(name: &str) -> Color {
     palette[hash % palette.len()]
 }
 
-fn build_original_line(text: String, m: &ChatMessage) -> Line {
+fn build_original_line(text: String, m: &ChatMessage) -> Line<'_> {
     Line::from(vec![
         Span::styled(
             format!("[{}]", m.timestamp),
@@ -60,7 +57,7 @@ fn build_original_line(text: String, m: &ChatMessage) -> Line {
     ])
 }
 
-fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<Line> {
+fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<Line<'_>> {
     let prefix = format!("[{}] {}: ", m.timestamp, m.author);
     let prefix_len = prefix.chars().count();
     let body_width = chat_width.saturating_sub(prefix_len).max(1);
@@ -127,13 +124,9 @@ pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: 
     total_rows.saturating_sub(visible_rows)
 }
 
-fn get_lines_by_kind(m: &ChatMessage, width: usize) -> Vec<Line> {
+fn get_lines_by_kind(m: &ChatMessage, width: usize) -> Vec<Line<'_>> {
     match m.kind {
-        MessageKind::Text => {
-            let lines = build_lines(m, width);
-
-            lines
-        }
+        MessageKind::Text => build_lines(m, width),
         MessageKind::Subscription => {
             let line = Line::from(vec![
                 Span::styled(
@@ -158,7 +151,7 @@ fn get_visible_messages(
     app: &AppState,
     chat_width: usize,
     visible_rows: usize,
-) -> Vec<(&ChatMessage, Vec<Line>)> {
+) -> Vec<(&ChatMessage, Vec<Line<'_>>)> {
     let mut remaining_scroll = app.scroll_state.scroll_offset;
     let mut used_rows = 0usize;
     let mut visible = Vec::new();
@@ -166,8 +159,10 @@ fn get_visible_messages(
     for message in app.messages.iter().rev() {
         // todo: consts for avatar with + gap
         let lines = get_lines_by_kind(
-            &message,
-            chat_width.saturating_sub(AVATAR_WIDTH + AVATAR_GAP).max(1),
+            message,
+            chat_width
+                .saturating_sub((AVATAR_WIDTH + AVATAR_GAP) as usize)
+                .max(1),
         );
         let height = row_count_for_message(message, chat_width);
 
@@ -195,20 +190,20 @@ fn get_visible_messages(
 }
 
 fn render_message(frame: &mut Frame, area: Rect, message: &ChatMessage, lines: &[Line]) {
-    let [avatar_area, gap_area, text_area] = Layout::default()
+    let [avatar_area, _gap_area, text_area] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(AVATAR_WIDTH as u16),
-            Constraint::Length(AVATAR_GAP as u16),
+            Constraint::Length(AVATAR_WIDTH),
+            Constraint::Length(AVATAR_GAP),
             Constraint::Min(1),
         ])
         .areas(area);
 
     if let Some(avatar) = message.avatar.as_ref() {
-        let image_height = avatar_area.height.min(AVATAR_HEIGHT as u16);
+        let image_height = avatar_area.height.min(AVATAR_HEIGHT);
         let centered_y = avatar_area.y + avatar_area.height.saturating_sub(image_height) / 2;
         let image_area = Rect::new(avatar_area.x, centered_y, avatar_area.width, image_height);
-        frame.render_widget(Image::new(&avatar), image_area);
+        frame.render_widget(Image::new(avatar), image_area);
     }
 
     frame.render_widget(
@@ -228,7 +223,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let visible_rows = areas[0].height.saturating_sub(2) as usize;
     let chat_width = areas[0].width.saturating_sub(2) as usize;
 
-    let scroll_mode = if app.scroll_state.auto_scroll == true {
+    let scroll_mode = if app.scroll_state.auto_scroll {
         "[FOLLOWING LIVE CHAT]"
     } else {
         "[FOLLOW DISABLED]"

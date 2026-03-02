@@ -69,9 +69,9 @@ async fn main() -> anyhow::Result<()> {
 
     spawn_input_task(tx.clone());
     spawn_stats_task(video_id, yt_service.clone(), tx.clone());
-    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx, picker.clone());
+    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx, picker);
 
-    let app = App::new(live_video.channel_name, picker);
+    let app = App::new(live_video.channel_name);
 
 
     app.run(&mut terminal, rx).await?;

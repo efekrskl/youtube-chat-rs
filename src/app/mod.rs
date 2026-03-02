@@ -4,24 +4,22 @@ use crate::app::ui::{draw, max_scroll_for_viewport};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
-use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
 
 pub mod event;
 pub mod state;
 mod ui;
 
-struct ImageManager {
-    picker: Picker
-}
+pub const AVATAR_WIDTH: u16 = 2;
+pub const AVATAR_HEIGHT: u16 = 1;
+pub const AVATAR_GAP: u16 = 1;
 
 pub struct App {
     pub state: AppState,
-    pub image: ImageManager
 }
 
 impl App {
-    pub fn new(title: String, picker: Picker) -> Self {
+    pub fn new(title: String) -> Self {
         Self {
             state: AppState {
                 title,
@@ -34,9 +32,6 @@ impl App {
                 },
                 stats: Stats { viewer_count: 0 },
             },
-            image: ImageManager {
-                picker
-            }
         }
     }
 

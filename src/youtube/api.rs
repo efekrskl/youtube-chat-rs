@@ -1,4 +1,5 @@
 use crate::app::event::{AppEvent, ChatMessage, MessageKind};
+use crate::app::{AVATAR_HEIGHT, AVATAR_WIDTH};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
@@ -13,7 +14,6 @@ use ratatui_image::protocol::Protocol;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use std::collections::HashMap;
-use std::fs;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::Request;
@@ -84,7 +84,7 @@ impl YoutubeService {
 
         let channel_id = parsed
             .items
-            .get(0)
+            .first()
             .and_then(|i| i.id.as_ref())
             .and_then(|id| id.channel_id.clone());
         debug!("channel lookup result={:?}", channel_id);
@@ -111,7 +111,7 @@ impl YoutubeService {
 
         let video_id = parsed
             .items
-            .get(0)
+            .first()
             .and_then(|i| i.id.as_ref())
             .and_then(|id| id.video_id.clone());
         debug!("live video lookup result={:?}", video_id);
@@ -127,13 +127,13 @@ impl YoutubeService {
         let mut url = Url::parse("https://www.googleapis.com/youtube/v3/videos")?;
         url.query_pairs_mut()
             .append_pair("part", "liveStreamingDetails,snippet")
-            .append_pair("id", &live_video_id);
+            .append_pair("id", live_video_id);
 
         let body = self.make_yt_req(url).await?;
         let parsed: VideoListResponse = serde_json::from_str(&body)
             .context("Failed to parse search response (channel lookup)")?;
 
-        let item = parsed.items.get(0);
+        let item = parsed.items.first();
         let chat_id = item
             .and_then(|v| v.live_streaming_details.as_ref())
             .and_then(|d| d.active_live_chat_id.clone());
@@ -175,7 +175,7 @@ impl YoutubeService {
         &self,
         live_stream_id: &str,
     ) -> anyhow::Result<LiveVideoDetails> {
-        let Some(details) = self.find_chat_id_by_live_video_id(&live_stream_id).await? else {
+        let Some(details) = self.find_chat_id_by_live_video_id(live_stream_id).await? else {
             bail!("Couldn't find live chat id");
         };
         debug!(
@@ -194,7 +194,7 @@ impl YoutubeService {
         let mut url = Url::parse("https://www.googleapis.com/youtube/v3/videos")?;
         url.query_pairs_mut()
             .append_pair("part", "liveStreamingDetails")
-            .append_pair("id", &live_video_id);
+            .append_pair("id", live_video_id);
 
         let body = self.make_yt_req(url).await?;
         let parsed: VideoListResponse = serde_json::from_str(&body)
@@ -202,7 +202,7 @@ impl YoutubeService {
 
         let viewer_count = parsed
             .items
-            .get(0)
+            .first()
             .and_then(|v| v.live_streaming_details.as_ref())
             .and_then(|d| d.concurrent_viewers.clone());
         debug!("live chat lookup result={:?}", viewer_count);
@@ -216,15 +216,13 @@ impl YoutubeService {
         let bytes = reqwest::get(avatar_url).await.ok()?.bytes().await.ok()?;
         let image = load_from_memory(&bytes).unwrap();
 
-        let protocol = picker
+        picker
             .new_protocol(
                 image,
-                Rect::new(0, 0, 2, 1),
+                Rect::new(0, 0, AVATAR_WIDTH, AVATAR_HEIGHT),
                 Resize::Fit(Some(FilterType::Lanczos3)),
             )
-            .ok();
-
-        protocol
+            .ok()
     }
 
     pub async fn stream_chat(
@@ -319,7 +317,8 @@ impl YoutubeService {
                                 if let Some(cached_avatar) = avatar_cache.get(url) {
                                     Some(Arc::clone(cached_avatar))
                                 } else {
-                                    let protocol = Self::fetch_avatar(&picker, url).await.map(Arc::new);
+                                    let protocol =
+                                        Self::fetch_avatar(&picker, url).await.map(Arc::new);
                                     if let Some(ref avatar) = protocol {
                                         avatar_cache.insert(url.to_string(), Arc::clone(avatar));
                                     }
@@ -336,7 +335,7 @@ impl YoutubeService {
                                 timestamp,
                                 avatar,
                             }))
-                                .await?;
+                            .await?;
                         }
                         MessageType::NewSponsorEvent => {}
                         _ => {}

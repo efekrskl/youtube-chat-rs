@@ -1,7 +1,7 @@
-use ratatui_image::picker::Picker;
-use tokio::sync::mpsc;
 use crate::app::event::AppEvent;
 use crate::youtube::api::YoutubeService;
+use ratatui_image::picker::Picker;
+use tokio::sync::mpsc;
 
 pub mod api;
 pub mod auth;
@@ -11,14 +11,14 @@ pub fn spawn_youtube_chat_task(
     yt: YoutubeService,
     live_chat_id: String,
     tx: mpsc::Sender<AppEvent>,
-    picker: Picker
+    picker: Picker,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // todo let _ = tx.send(AppEvent::Status(StatusEvent::Connecting))
-        
+
         match yt.stream_chat(&live_chat_id, tx.clone(), picker).await {
-            Ok(_) => {},
-            Err(e) => {
+            Ok(_) => {}
+            Err(_e) => {
                 // todo: AppEvent::Error
             }
         }
