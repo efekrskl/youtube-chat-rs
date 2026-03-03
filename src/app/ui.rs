@@ -1,16 +1,25 @@
 use crate::app::event::{ChatMessage, MessageKind};
-use crate::app::state::AppState;
+use crate::app::state::{AppState, CachedMessageLayout};
+use anyhow::Result;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::crossterm::{
+    cursor::{MoveTo, RestorePosition, SavePosition},
+    queue,
+};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use std::io::{Write, stdout};
+use std::sync::Arc;
 
 const COLOR_BG: Color = Color::Rgb(35, 39, 65);
 const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
+const AVATAR_WIDTH: usize = 2;
+const AVATAR_GAP: usize = 1;
 
 fn nick_color(name: &str) -> Color {
     let palette = [
@@ -37,8 +46,28 @@ fn nick_color(name: &str) -> Color {
     palette[hash % palette.len()]
 }
 
-fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
+#[derive(Clone, PartialEq, Eq)]
+pub struct AvatarOverlay {
+    pub x: u16,
+    pub y: u16,
+    pub image: Arc<String>,
+}
+
+fn avatar_placeholder(m: &ChatMessage) -> Span<'static> {
+    let initial = m.author.chars().next().unwrap_or(' ');
+    Span::styled(
+        format!("{initial:<width$}", width = AVATAR_WIDTH),
+        Style::default()
+            .fg(Color::Rgb(18, 19, 32))
+            .bg(nick_color(&m.author))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn build_original_line(text: String, m: &ChatMessage) -> ListItem<'static> {
     ListItem::new(Line::from(vec![
+        avatar_placeholder(m),
+        Span::raw(" ".repeat(AVATAR_GAP)),
         Span::styled(
             format!("[{}]", m.timestamp),
             Style::default().fg(COLOR_TEXT_MUTED),
@@ -55,44 +84,45 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
     ]))
 }
 
-fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
-    let prefix = format!("[{}] {}: ", m.timestamp, m.author);
-    let prefix_len = prefix.chars().count();
-    let body_width = chat_width.saturating_sub(prefix_len).max(1);
-    let wrapped = textwrap::wrap(&m.message, body_width);
-
-    let mut lines = Vec::with_capacity(wrapped.len().max(1));
-
-    if wrapped.is_empty() {
-        lines.push(build_original_line(m.message.clone(), m));
-
-        return lines;
-    }
-
-    lines.push(build_original_line(wrapped[0].to_string(), m));
-    let indent = " ".repeat(prefix_len);
-
-    for part in wrapped.iter().skip(1) {
-        lines.push(ListItem::new(Line::from(vec![
-            Span::styled(indent.clone(), Style::default().fg(COLOR_TEXT)),
-            Span::styled(part.to_string(), Style::default().fg(COLOR_TEXT)),
-        ])));
-    }
-
-    lines
-}
-
-// todo: remove duplication?
-fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
+fn build_lines(m: &ChatMessage, layout: &CachedMessageLayout) -> Vec<ListItem<'static>> {
     match m.kind {
         MessageKind::Text => {
+            let mut lines = Vec::with_capacity(layout.body_lines.len().max(1));
+            let first_line = layout
+                .body_lines
+                .first()
+                .cloned()
+                .unwrap_or_else(|| m.message.clone());
+
+            lines.push(build_original_line(first_line, m));
+
             let prefix = format!("[{}] {}: ", m.timestamp, m.author);
-            let prefix_len = prefix.chars().count();
-            let body_width = chat_width.saturating_sub(prefix_len).max(1);
-            let wrapped = textwrap::wrap(&m.message, body_width);
-            wrapped.len().max(1)
+            let indent = " ".repeat(AVATAR_WIDTH + AVATAR_GAP + prefix.chars().count());
+
+            for part in layout.body_lines.iter().skip(1) {
+                lines.push(ListItem::new(Line::from(vec![
+                    Span::styled(indent.clone(), Style::default().fg(COLOR_TEXT)),
+                    Span::styled(part.clone(), Style::default().fg(COLOR_TEXT)),
+                ])));
+            }
+
+            lines
         }
-        MessageKind::Subscription => 1,
+        MessageKind::Subscription => vec![ListItem::new(Line::from(vec![
+            avatar_placeholder(m),
+            Span::raw(" ".repeat(AVATAR_GAP)),
+            Span::styled(
+                format!(" {} ", m.author),
+                Style::default()
+                    .fg(nick_color(&m.author))
+                    .bg(COLOR_SUB_BG)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} ", m.message),
+                Style::default().fg(COLOR_TEXT).bg(COLOR_SUB_BG),
+            ),
+        ]))],
     }
 }
 
@@ -110,63 +140,74 @@ fn build_title(app: &AppState) -> Line<'static> {
     ])
 }
 
-pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: usize) -> usize {
-    let total_rows = app
-        .messages
-        .iter()
-        .map(|m| row_count_for_message(m, chat_width))
-        .sum::<usize>();
-    total_rows.saturating_sub(visible_rows)
+fn collect_rows_and_overlays(
+    app: &AppState,
+    visible_rows: usize,
+    inner: Rect,
+) -> (Vec<ListItem<'static>>, Vec<AvatarOverlay>) {
+    let total_rows = app.total_rows;
+    let max_scroll = total_rows.saturating_sub(visible_rows);
+    let scroll = app.scroll_state.scroll_offset.min(max_scroll);
+    let end = total_rows.saturating_sub(scroll);
+    let start = end.saturating_sub(visible_rows);
+
+    let mut items = Vec::new();
+    let mut overlays = Vec::new();
+    let mut row_cursor = 0usize;
+
+    for (message, layout) in app.messages.iter().zip(app.layouts.iter()) {
+        let rows = build_lines(message, layout);
+        let row_count = rows.len().max(1);
+        let message_start = row_cursor;
+        let message_end = row_cursor + row_count;
+
+        if message_end <= start {
+            row_cursor = message_end;
+            continue;
+        }
+
+        if message_start >= end {
+            break;
+        }
+
+        if let Some(avatar) = &message.avatar {
+            if (start..end).contains(&message_start) {
+                overlays.push(AvatarOverlay {
+                    x: inner.x,
+                    y: inner.y + (message_start - start) as u16,
+                    image: Arc::clone(avatar),
+                });
+            }
+        }
+
+        let visible_start = start.saturating_sub(message_start);
+        let visible_end = end.saturating_sub(message_start).min(row_count);
+        items.extend(
+            rows.into_iter()
+                .skip(visible_start)
+                .take(visible_end.saturating_sub(visible_start)),
+        );
+
+        row_cursor = message_end;
+    }
+
+    (items, overlays)
 }
 
-pub fn draw(frame: &mut Frame, app: &AppState) {
+pub fn draw_with_overlays(frame: &mut Frame, app: &AppState) -> Vec<AvatarOverlay> {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(frame.area());
 
     let visible_rows = areas[0].height.saturating_sub(2) as usize;
-    let chat_width = areas[0].width.saturating_sub(2) as usize;
-
-    let all_rows: Vec<ListItem> = app
-        .messages
-        .iter()
-        .flat_map(|m| match m.kind {
-            MessageKind::Text => {
-                let lines = build_lines(m, chat_width);
-
-                lines
-            }
-            MessageKind::Subscription => {
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!(" {} ", m.author),
-                        Style::default()
-                            .fg(nick_color(&m.author))
-                            .bg(COLOR_SUB_BG)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("{} ", m.message),
-                        Style::default().fg(COLOR_TEXT).bg(COLOR_SUB_BG),
-                    ),
-                ]);
-
-                vec![ListItem::new(line)]
-            }
-        })
-        .collect();
-
-    let total_rows = all_rows.len();
-    let max_scroll = max_scroll_for_viewport(app, chat_width, visible_rows);
-    let scroll = app.scroll_state.scroll_offset.min(max_scroll);
-    let end = total_rows.saturating_sub(scroll);
-    let start = end.saturating_sub(visible_rows);
-    let items: Vec<ListItem> = all_rows
-        .into_iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .collect();
+    let inner = Rect::new(
+        areas[0].x.saturating_add(1),
+        areas[0].y.saturating_add(1),
+        areas[0].width.saturating_sub(2),
+        areas[0].height.saturating_sub(2),
+    );
+    let (items, overlays) = collect_rows_and_overlays(app, visible_rows, inner);
 
     let chat = List::new(items)
         .block(
@@ -196,4 +237,25 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     frame.render_widget(chat, areas[0]);
     frame.render_widget(help, areas[1]);
+
+    overlays
+}
+
+pub fn draw_avatar_overlays(overlays: &[AvatarOverlay], avatar_pixels: (u16, u16)) -> Result<()> {
+    let mut out = stdout();
+
+    for overlay in overlays {
+        queue!(out, SavePosition, MoveTo(overlay.x, overlay.y))?;
+        write!(
+            out,
+            "\x1b]1337;File=inline=1;preserveAspectRatio=0;doNotMoveCursor=1;width={}px;height={}px:{}\x07",
+            avatar_pixels.0,
+            avatar_pixels.1,
+            overlay.image.as_str()
+        )?;
+        queue!(out, RestorePosition)?;
+    }
+
+    out.flush()?;
+    Ok(())
 }

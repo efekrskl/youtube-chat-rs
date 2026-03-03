@@ -1,6 +1,6 @@
 use crate::app::event::AppEvent;
 use crate::app::state::{AppState, ScrollState, Stats};
-use crate::app::ui::{draw, max_scroll_for_viewport};
+use crate::app::ui::{AvatarOverlay, draw_avatar_overlays, draw_with_overlays};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
@@ -12,14 +12,19 @@ mod ui;
 
 pub struct App {
     pub state: AppState,
+    avatar_pixels: (u16, u16),
+    last_overlays: Vec<AvatarOverlay>,
 }
 
 impl App {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: String, avatar_pixels: (u16, u16)) -> Self {
         Self {
             state: AppState {
                 title,
                 messages: Default::default(),
+                layouts: Default::default(),
+                layout_width: None,
+                total_rows: 0,
                 scroll_state: ScrollState {
                     scroll_offset: 0,
                     auto_scroll: true,
@@ -28,6 +33,8 @@ impl App {
                 },
                 stats: Stats { viewer_count: 0 },
             },
+            avatar_pixels,
+            last_overlays: Vec::new(),
         }
     }
 
@@ -52,12 +59,22 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> anyhow::Result<()> {
-        terminal.draw(|f| draw(f, &self.state))?;
         let size = terminal.size()?;
         let visible_rows = size.height.saturating_sub(3) as usize;
         let chat_width = size.width.saturating_sub(2) as usize;
-        let max_scroll = max_scroll_for_viewport(&self.state, chat_width, visible_rows);
+        self.state.ensure_layout_cache(chat_width);
+        let max_scroll = self.state.total_rows.saturating_sub(visible_rows);
         self.state.update_scroll_state(visible_rows, max_scroll);
+        let mut overlays = Vec::new();
+
+        terminal.draw(|f| {
+            overlays = draw_with_overlays(f, &self.state);
+        })?;
+
+        if overlays != self.last_overlays {
+            draw_avatar_overlays(&overlays, self.avatar_pixels)?;
+            self.last_overlays = overlays;
+        }
 
         Ok(())
     }
@@ -67,13 +84,21 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         mut rx: mpsc::Receiver<AppEvent>,
     ) -> anyhow::Result<()> {
-        loop {
-            self.handle_tui(terminal).await?;
+        self.handle_tui(terminal).await?;
 
+        loop {
             let Some(ev) = rx.recv().await else { break };
             if self.on_event(ev) {
                 break;
             }
+
+            while let Ok(ev) = rx.try_recv() {
+                if self.on_event(ev) {
+                    return Ok(());
+                }
+            }
+
+            self.handle_tui(terminal).await?;
         }
         Ok(())
     }

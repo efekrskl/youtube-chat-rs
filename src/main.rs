@@ -11,6 +11,7 @@ use crate::youtube::api::YoutubeService;
 use crate::youtube::auth::auth;
 use crate::youtube::spawn_youtube_chat_task;
 use log::debug;
+use ratatui::crossterm::terminal::window_size;
 use tokio::sync::mpsc;
 use crate::stats_task::spawn_stats_task;
 
@@ -36,6 +37,9 @@ struct Args {
     channel: Option<String>,
 }
 
+const AVATAR_WIDTH: u16 = 2;
+const AVATAR_HEIGHT: u16 = 1;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -54,15 +58,19 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let live_video = yt_service.find_live_video_details_by_video_id(&video_id).await?;
+    let window = window_size()?;
+    let cell_width = (window.width / window.columns.max(1)).max(1);
+    let cell_height = (window.height / window.rows.max(1)).max(1);
+    let avatar_pixels = (cell_width * AVATAR_WIDTH, cell_height * AVATAR_HEIGHT);
 
     let mut terminal = ratatui::init();
     let (tx, rx) = mpsc::channel(100);
 
     spawn_input_task(tx.clone());
     spawn_stats_task(video_id, yt_service.clone(), tx.clone());
-    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx);
+    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx, avatar_pixels);
 
-    let app = App::new(live_video.channel_name);
+    let app = App::new(live_video.channel_name, avatar_pixels);
 
     app.run(&mut terminal, rx).await?;
     ratatui::restore();
