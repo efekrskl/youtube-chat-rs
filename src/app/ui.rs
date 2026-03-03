@@ -1,5 +1,5 @@
 use crate::app::event::{ChatMessage, MessageKind};
-use crate::app::state::{AppState, CachedMessageLayout};
+use crate::app::state::AppState;
 use anyhow::Result;
 use ratatui::Frame;
 use ratatui::crossterm::{
@@ -84,25 +84,32 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem<'static> {
     ]))
 }
 
-fn build_lines(m: &ChatMessage, layout: &CachedMessageLayout) -> Vec<ListItem<'static>> {
+fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem<'static>> {
     match m.kind {
         MessageKind::Text => {
-            let mut lines = Vec::with_capacity(layout.body_lines.len().max(1));
-            let first_line = layout
-                .body_lines
+            let prefix = format!("[{}] {}: ", m.timestamp, m.author);
+            let prefix_len = AVATAR_WIDTH + AVATAR_GAP + prefix.chars().count();
+            let body_width = chat_width.saturating_sub(prefix_len).max(1);
+            let wrapped = textwrap::wrap(&m.message, body_width);
+            let mut body_lines: Vec<String> = if wrapped.is_empty() {
+                vec![m.message.clone()]
+            } else {
+                wrapped.into_iter().map(|part| part.into_owned()).collect()
+            };
+            let first_line = body_lines
                 .first()
                 .cloned()
                 .unwrap_or_else(|| m.message.clone());
+            let mut lines = Vec::with_capacity(body_lines.len().max(1));
 
             lines.push(build_original_line(first_line, m));
 
-            let prefix = format!("[{}] {}: ", m.timestamp, m.author);
             let indent = " ".repeat(AVATAR_WIDTH + AVATAR_GAP + prefix.chars().count());
 
-            for part in layout.body_lines.iter().skip(1) {
+            for part in body_lines.drain(1..) {
                 lines.push(ListItem::new(Line::from(vec![
                     Span::styled(indent.clone(), Style::default().fg(COLOR_TEXT)),
-                    Span::styled(part.clone(), Style::default().fg(COLOR_TEXT)),
+                    Span::styled(part, Style::default().fg(COLOR_TEXT)),
                 ])));
             }
 
@@ -126,6 +133,19 @@ fn build_lines(m: &ChatMessage, layout: &CachedMessageLayout) -> Vec<ListItem<'s
     }
 }
 
+fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
+    build_lines(m, chat_width).len().max(1)
+}
+
+pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: usize) -> usize {
+    let total_rows = app
+        .messages
+        .iter()
+        .map(|message| row_count_for_message(message, chat_width))
+        .sum::<usize>();
+    total_rows.saturating_sub(visible_rows)
+}
+
 fn build_title(app: &AppState) -> Line<'static> {
     Line::from(vec![
         Span::styled("[ ", Style::default().fg(COLOR_TEXT_MUTED)),
@@ -143,9 +163,14 @@ fn build_title(app: &AppState) -> Line<'static> {
 fn collect_rows_and_overlays(
     app: &AppState,
     visible_rows: usize,
+    chat_width: usize,
     inner: Rect,
 ) -> (Vec<ListItem<'static>>, Vec<AvatarOverlay>) {
-    let total_rows = app.total_rows;
+    let total_rows = app
+        .messages
+        .iter()
+        .map(|message| row_count_for_message(message, chat_width))
+        .sum::<usize>();
     let max_scroll = total_rows.saturating_sub(visible_rows);
     let scroll = app.scroll_state.scroll_offset.min(max_scroll);
     let end = total_rows.saturating_sub(scroll);
@@ -155,8 +180,8 @@ fn collect_rows_and_overlays(
     let mut overlays = Vec::new();
     let mut row_cursor = 0usize;
 
-    for (message, layout) in app.messages.iter().zip(app.layouts.iter()) {
-        let rows = build_lines(message, layout);
+    for message in &app.messages {
+        let rows = build_lines(message, chat_width);
         let row_count = rows.len().max(1);
         let message_start = row_cursor;
         let message_end = row_cursor + row_count;
@@ -201,13 +226,14 @@ pub fn draw_with_overlays(frame: &mut Frame, app: &AppState) -> Vec<AvatarOverla
         .split(frame.area());
 
     let visible_rows = areas[0].height.saturating_sub(2) as usize;
+    let chat_width = areas[0].width.saturating_sub(2) as usize;
     let inner = Rect::new(
         areas[0].x.saturating_add(1),
         areas[0].y.saturating_add(1),
         areas[0].width.saturating_sub(2),
         areas[0].height.saturating_sub(2),
     );
-    let (items, overlays) = collect_rows_and_overlays(app, visible_rows, inner);
+    let (items, overlays) = collect_rows_and_overlays(app, visible_rows, chat_width, inner);
 
     let chat = List::new(items)
         .block(
