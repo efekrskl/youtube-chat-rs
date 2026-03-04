@@ -8,7 +8,9 @@ YouTube chat in the terminal.
 
 </div>
 
-A terminal UI (TUI) app for viewing YouTube live chat. Currently only supports reading live messages, with more interactive features planned.
+A terminal UI (TUI) app for viewing YouTube live chat. Currently only supports reading live messages, with more interactive features planned. 
+
+> Avatar rendering currently works only in **Kitty** terminals. Other terminals will display chat without avatars.
 
 ## How to Use
 
@@ -16,4 +18,12 @@ A terminal UI (TUI) app for viewing YouTube live chat. Currently only supports r
 
 2. Download your client_secret.json (OAuth credentials).
 
-3. Run the application.
+3. Run the application and connect to a stream using one of the following:
+
+```bash
+ytc --video-id <VIDEO_ID>
+
+or
+
+ytc --channel-name <CHANNEL_NAME>
+```
