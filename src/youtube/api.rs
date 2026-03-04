@@ -1,11 +1,18 @@
-use crate::app::event::{AppEvent, ChatMessage, MessageKind};
+use crate::app::event::{AppEvent, ChatMessage, KittyAvatar, MessageKind};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use anyhow::{Context, bail};
+use image::imageops::FilterType;
 use log::debug;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::io::Write;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -203,6 +210,31 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
+    async fn fetch_avatar(&self, avatar_url: &str) -> Option<KittyAvatar> {
+        let response = self.http.get(avatar_url).send().await.ok()?;
+        let bytes = response.bytes().await.ok()?;
+        let image = image::load_from_memory(&bytes).ok()?;
+        let resized = image.resize_to_fill(32, 32, FilterType::Lanczos3);
+        let rgba = resized.to_rgba8();
+        let (width, height) = rgba.dimensions();
+
+        let mut hasher = DefaultHasher::new();
+        avatar_url.hash(&mut hasher);
+        let id = hasher.finish() as u32 & 0x00FF_FFFF;
+
+        let path = std::env::temp_dir().join(format!("ytc-kitty-avatar-{id}.rgba"));
+        let mut file = File::create(&path).ok()?;
+        file.write_all(rgba.as_raw()).ok()?;
+
+        Some(KittyAvatar {
+            id,
+            cols: 2,
+            width,
+            height,
+            path: path.to_string_lossy().into_owned(),
+        })
+    }
+
     pub async fn stream_chat(
         &self,
         live_chat_id: &str,
@@ -220,6 +252,7 @@ impl YoutubeService {
 
         let mut next_page_token: Option<String> = None;
         let mut poll_cycle: usize = 0;
+        let mut avatar_cache: HashMap<String, KittyAvatar> = HashMap::new();
 
         loop {
             poll_cycle += 1;
@@ -285,12 +318,31 @@ impl YoutubeService {
                                 .get(11..16)
                                 .unwrap_or("--:--")
                                 .to_string();
+                            let avatar = if let Some(url) = item
+                                .author_details
+                                .as_ref()
+                                .and_then(|d| d.profile_image_url.as_deref())
+                            {
+                                if let Some(cached) = avatar_cache.get_mut(url) {
+                                    let avatar = Arc::new(cached.clone());
+                                    Some(avatar)
+                                } else if let Some(fetched) = self.fetch_avatar(url).await {
+                                    let avatar = Arc::new(fetched.clone());
+                                    avatar_cache.insert(url.to_string(), fetched);
+                                    Some(avatar)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
 
                             tx.send(AppEvent::Chat(ChatMessage {
                                 author,
                                 message,
                                 kind: MessageKind::Text,
                                 timestamp,
+                                avatar,
                             }))
                             .await?;
                         }

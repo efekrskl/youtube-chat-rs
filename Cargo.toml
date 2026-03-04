@@ -20,6 +20,8 @@ log = "0.4.29"
 ratatui = "0.30.0"
 textwrap = "0.16.2"
 clap = { version = "4.5.60", features = ["derive"] }
+base64 = "0.22.1"
+image = "0.25.9"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

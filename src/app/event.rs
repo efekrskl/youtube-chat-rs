@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ratatui::crossterm::event::KeyEvent;
 
 #[derive(Debug, Clone)]
@@ -17,11 +19,21 @@ pub struct StatsMessage {
 }
 
 #[derive(Debug, Clone)]
+pub struct KittyAvatar {
+    pub id: u32,
+    pub cols: u16,
+    pub width: u32,
+    pub height: u32,
+    pub path: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ChatMessage {
     pub timestamp: String,
     pub author: String,
     pub message: String,
     pub kind: MessageKind,
+    pub avatar: Option<Arc<KittyAvatar>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

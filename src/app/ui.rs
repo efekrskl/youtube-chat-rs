@@ -11,6 +11,7 @@ const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
+const AVATAR_PLACEHOLDER_UNICODE: char = '\u{10EEEE}';
 
 fn nick_color(name: &str) -> Color {
     let palette = [
@@ -37,8 +38,27 @@ fn nick_color(name: &str) -> Color {
     palette[hash % palette.len()]
 }
 
+fn u32_to_color(value: u32) -> Color {
+    Color::Rgb(
+        ((value >> 16) & 0xFF) as u8,
+        ((value >> 8) & 0xFF) as u8,
+        (value & 0xFF) as u8,
+    )
+}
+
 fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
     ListItem::new(Line::from(vec![
+        if let Some(avatar) = &m.avatar {
+            let avatar_placeholder: String =
+                std::iter::repeat_n(AVATAR_PLACEHOLDER_UNICODE, avatar.cols as usize).collect();
+            Span::styled(
+                avatar_placeholder,
+                Style::default()
+                    .fg(u32_to_color(avatar.id))
+            )
+        } else {
+            Span::raw("")
+        },
         Span::styled(
             format!("[{}]", m.timestamp),
             Style::default().fg(COLOR_TEXT_MUTED),
@@ -56,8 +76,9 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
 }
 
 fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
+    let avatar_width = m.avatar.as_ref().map(|a| a.cols as usize).unwrap_or(0);
     let prefix = format!("[{}] {}: ", m.timestamp, m.author);
-    let prefix_len = prefix.chars().count();
+    let prefix_len = avatar_width + prefix.chars().count();
     let body_width = chat_width.saturating_sub(prefix_len).max(1);
     let wrapped = textwrap::wrap(&m.message, body_width);
 
@@ -105,7 +126,10 @@ fn build_title(app: &AppState) -> Line<'static> {
         Span::styled(" ] - [ ", Style::default().fg(COLOR_TEXT_MUTED)),
         Span::styled("Viewers", Style::default().fg(COLOR_BORDER)),
         Span::styled(": ", Style::default().fg(COLOR_TEXT_MUTED)),
-        Span::styled(app.stats.viewer_count.to_string(), Style::default().fg(COLOR_TEXT)),
+        Span::styled(
+            app.stats.viewer_count.to_string(),
+            Style::default().fg(COLOR_TEXT),
+        ),
         Span::styled(" ]", Style::default().fg(COLOR_TEXT_MUTED)),
     ])
 }
