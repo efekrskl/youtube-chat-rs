@@ -89,13 +89,21 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         mut rx: mpsc::Receiver<AppEvent>,
     ) -> anyhow::Result<()> {
-        loop {
-            self.handle_tui(terminal).await?;
+        self.handle_tui(terminal).await?;
 
+        loop {
             let Some(ev) = rx.recv().await else { break };
             if self.on_event(ev) {
                 break;
             }
+
+            while let Ok(ev) = rx.try_recv() {
+                if self.on_event(ev) {
+                    return Ok(());
+                }
+            }
+
+            self.handle_tui(terminal).await?;
         }
         Ok(())
     }
