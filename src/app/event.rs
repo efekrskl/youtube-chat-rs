@@ -34,6 +34,7 @@ pub struct ChatMessage {
     pub message: String,
     pub kind: MessageKind,
     pub avatar: Option<Arc<KittyAvatar>>,
+    pub is_member: bool
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

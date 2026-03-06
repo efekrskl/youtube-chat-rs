@@ -7,6 +7,7 @@ use image::imageops::FilterType;
 use log::debug;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
+use serde_json::Value::Bool;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs::File;
@@ -318,6 +319,11 @@ impl YoutubeService {
                                 .get(11..16)
                                 .unwrap_or("--:--")
                                 .to_string();
+                            let is_member = item
+                                .author_details
+                                .as_ref()
+                                .and_then(|d| d.is_chat_sponsor.to_owned())
+                                .unwrap_or(false);
                             let avatar = if let Some(url) = item
                                 .author_details
                                 .as_ref()
@@ -343,6 +349,7 @@ impl YoutubeService {
                                 kind: MessageKind::Text,
                                 timestamp,
                                 avatar,
+                                is_member,
                             }))
                             .await?;
                         }

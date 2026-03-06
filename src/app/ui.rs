@@ -53,8 +53,7 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
                 std::iter::repeat_n(AVATAR_PLACEHOLDER_UNICODE, avatar.cols as usize).collect();
             Span::styled(
                 avatar_placeholder,
-                Style::default()
-                    .fg(u32_to_color(avatar.id))
+                Style::default().fg(u32_to_color(avatar.id)),
             )
         } else {
             Span::raw("")
@@ -63,7 +62,7 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
             format!("[{}]", m.timestamp),
             Style::default().fg(COLOR_TEXT_MUTED),
         ),
-        Span::raw(" "),
+        Span::raw(if m.is_member { " ⭐ " } else { " " }),
         Span::styled(
             format!("{}:", m.author),
             Style::default()
