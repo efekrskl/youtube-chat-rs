@@ -1,4 +1,4 @@
-use crate::app::event::{ChatMessage, MessageKind};
+use crate::app::event::{ChatMessage, MessageKind, StatusEvent};
 use crate::app::state::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -11,6 +11,9 @@ const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
+const COLOR_OK: Color = Color::Rgb(110, 231, 183);
+const COLOR_WARN: Color = Color::Rgb(251, 191, 36);
+const COLOR_ERROR: Color = Color::Rgb(248, 113, 113);
 const AVATAR_PLACEHOLDER_UNICODE: char = '\u{10EEEE}';
 
 fn nick_color(name: &str) -> Color {
@@ -46,7 +49,7 @@ fn u32_to_color(value: u32) -> Color {
     )
 }
 
-fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
+fn build_original_line(text: String, m: &ChatMessage) -> ListItem<'static> {
     ListItem::new(Line::from(vec![
         if let Some(avatar) = &m.avatar {
             let avatar_placeholder: String =
@@ -74,7 +77,7 @@ fn build_original_line(text: String, m: &ChatMessage) -> ListItem {
     ]))
 }
 
-fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem> {
+fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem<'static>> {
     let avatar_width = m.avatar.as_ref().map(|a| a.cols as usize).unwrap_or(0);
     let prefix = format!("[{}] {}: ", m.timestamp, m.author);
     let prefix_len = avatar_width + prefix.chars().count();
@@ -117,6 +120,12 @@ fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
 }
 
 fn build_title(app: &AppState) -> Line<'static> {
+    let (status_text, status_color) = match app.connection.status {
+        StatusEvent::Connecting => ("Connecting", COLOR_WARN),
+        StatusEvent::Connected => ("Connected", COLOR_OK),
+        StatusEvent::Disconnected => ("Disconnected", COLOR_ERROR),
+    };
+
     Line::from(vec![
         Span::styled("[ ", Style::default().fg(COLOR_TEXT_MUTED)),
         Span::styled("Channel", Style::default().fg(COLOR_BORDER)),
@@ -129,6 +138,10 @@ fn build_title(app: &AppState) -> Line<'static> {
             app.stats.viewer_count.to_string(),
             Style::default().fg(COLOR_TEXT),
         ),
+        Span::styled(" ] - [ ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled("Status", Style::default().fg(COLOR_BORDER)),
+        Span::styled(": ", Style::default().fg(COLOR_TEXT_MUTED)),
+        Span::styled(status_text, Style::default().fg(status_color)),
         Span::styled(" ]", Style::default().fg(COLOR_TEXT_MUTED)),
     ])
 }

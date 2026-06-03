@@ -1,5 +1,5 @@
-use crate::app::event::{AppEvent, KittyAvatar};
-use crate::app::state::{AppState, ScrollState, Stats};
+use crate::app::event::{AppEvent, KittyAvatar, StatusEvent};
+use crate::app::state::{AppState, ConnectionState, ScrollState, Stats};
 use crate::app::ui::{draw, max_scroll_for_viewport};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ratatui::Terminal;
@@ -27,6 +27,10 @@ impl App {
             state: AppState {
                 title,
                 messages: Default::default(),
+                connection: ConnectionState {
+                    status: StatusEvent::Connecting,
+                    last_error: None,
+                },
                 scroll_state: ScrollState {
                     scroll_offset: 0,
                     auto_scroll: true,
@@ -62,9 +66,9 @@ impl App {
                 }
             }
             AppEvent::StatsUpdate(stats) => self.state.update_stats(stats.viewer_count),
-            _ => {
-                // todo
-            }
+            AppEvent::Status(status) => self.state.update_status(status),
+            AppEvent::Error(error) => self.state.set_error(error),
+            _ => {}
         }
 
         false

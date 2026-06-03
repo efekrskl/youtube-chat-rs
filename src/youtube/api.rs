@@ -1,4 +1,4 @@
-use crate::app::event::{AppEvent, ChatMessage, KittyAvatar, MessageKind};
+use crate::app::event::{AppEvent, ChatMessage, KittyAvatar, MessageKind, StatusEvent};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
@@ -7,17 +7,22 @@ use image::imageops::FilterType;
 use log::debug;
 use reqwest::Url;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
-use serde_json::Value::Bool;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
+
+const GRPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const GRPC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
+const GRPC_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(1);
+const TCP_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub struct YoutubeService {
@@ -245,9 +250,15 @@ impl YoutubeService {
         let tls = ClientTlsConfig::new().with_native_roots();
         let channel: Channel = Channel::from_static("https://youtube.googleapis.com")
             .tls_config(tls)?
+            .connect_timeout(GRPC_CONNECT_TIMEOUT)
+            .tcp_keepalive(Some(TCP_KEEP_ALIVE_INTERVAL))
+            .http2_keep_alive_interval(GRPC_KEEP_ALIVE_INTERVAL)
+            .keep_alive_timeout(GRPC_KEEP_ALIVE_TIMEOUT)
+            .keep_alive_while_idle(true)
             .connect()
             .await?;
         debug!("gRPC channel connected");
+        tx.send(AppEvent::Status(StatusEvent::Connected)).await?;
 
         let mut client = V3DataLiveChatMessageServiceClient::new(channel);
 

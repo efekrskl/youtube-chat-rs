@@ -1,4 +1,4 @@
-use crate::app::event::ChatMessage;
+use crate::app::event::{ChatMessage, StatusEvent};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::VecDeque;
 
@@ -12,10 +12,16 @@ pub struct ScrollState {
 pub struct Stats {
     pub viewer_count: u32
 }
+
+pub struct ConnectionState {
+    pub status: StatusEvent,
+    pub last_error: Option<String>,
+}
+
 pub struct AppState {
     pub title: String,
     pub messages: VecDeque<ChatMessage>,
-    // todo: pub status: String,
+    pub connection: ConnectionState,
     pub scroll_state: ScrollState,
     pub stats: Stats
 }
@@ -59,6 +65,18 @@ impl AppState {
 
     pub fn update_stats(&mut self, viewer_count: u32) {
         self.stats.viewer_count = viewer_count;
+    }
+
+    pub fn update_status(&mut self, status: StatusEvent) {
+        self.connection.status = status;
+        if !matches!(self.connection.status, StatusEvent::Disconnected) {
+            self.connection.last_error = None;
+        }
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.connection.last_error = Some(error);
+        self.connection.status = StatusEvent::Disconnected;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
