@@ -1,6 +1,6 @@
 [package]
 name = "youtube-chat-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 repository = "https://github.com/efekrskl/youtube-chat-rs"
 homepage = "https://github.com/efekrskl/youtube-chat-rs"
