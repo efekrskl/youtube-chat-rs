@@ -17,7 +17,7 @@ A terminal UI (TUI) app for viewing YouTube live chat. Currently only supports r
 ### Homebrew
 
 ```bash
-brew install efekrskl/ytc/ytc
+brew install efekrskl/tap/ytc
 ```
 
 ### First Run Requirements
