@@ -2,10 +2,16 @@
 name = "youtube-chat-rs"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/efekrskl/youtube-chat-rs"
+homepage = "https://github.com/efekrskl/youtube-chat-rs"
+description = "YouTube chat in the terminal."
 
 [[bin]]
 name = "ytc"
 path = "src/main.rs"
+
+[package.metadata.dist]
+formula = "ytc"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -29,3 +35,8 @@ image = "0.25.9"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

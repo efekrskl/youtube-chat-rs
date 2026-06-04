@@ -12,13 +12,22 @@ A terminal UI (TUI) app for viewing YouTube live chat. Currently only supports r
 
 > Avatar rendering currently works only in **Kitty** terminals. Other terminals will display chat without avatars.
 
+## Install
+
+### Homebrew
+
+```bash
+brew install efekrskl/ytc/ytc
+```
+
+### First Run Requirements
+
+- A Google Cloud project with the YouTube Data API enabled
+- OAuth desktop app credentials downloaded as `client_secret.json`
+
 ## How to Use
 
-1. Create a Google Cloud project and enable the YouTube Data API.
-
-2. Download your client_secret.json (OAuth credentials).
-
-3. Run the application and connect to a stream using one of the following:
+Run the application and connect to a stream using one of the following:
 
 ```bash
 ytc --video-id <VIDEO_ID>
@@ -27,3 +36,11 @@ or
 
 ytc --channel-name <CHANNEL_NAME>
 ```
+
+or during local development
+
+```bash
+cargo run -- --video-id <VIDEO_ID>
+```
+
+If this is your first time running the app, you will be prompted for auth.
