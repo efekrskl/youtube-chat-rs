@@ -38,6 +38,7 @@ impl App {
                     max_scroll_rows: 0,
                 },
                 stats: Stats { viewer_count: 0 },
+                dropped_messages: 0,
             },
             graphics: Graphics {
                 kitty_supported: std::env::var("TERM")
@@ -57,8 +58,15 @@ impl App {
                     }
                 } else {
                     msg.avatar = None;
+                    msg.avatar_url = None;
                 }
                 self.state.push_message(msg)
+            }
+            AppEvent::AvatarReady { url, avatar } => {
+                if self.graphics.kitty_supported {
+                    let _ = prepare_kitty_avatar(&avatar, &mut self.graphics.loaded_avatar_ids);
+                    self.state.attach_avatar(&url, avatar);
+                }
             }
             AppEvent::Input(key) => {
                 if self.state.handle_key(key) {
@@ -68,7 +76,7 @@ impl App {
             AppEvent::StatsUpdate(stats) => self.state.update_stats(stats.viewer_count),
             AppEvent::Status(status) => self.state.update_status(status),
             AppEvent::Error(error) => self.state.set_error(error),
-            _ => {}
+            AppEvent::Dropped(count) => self.state.note_dropped(count),
         }
 
         false
@@ -120,9 +128,12 @@ fn prepare_kitty_avatar(
     let mut out = stdout();
 
     if loaded_avatar_ids.insert(avatar.id) {
+        // `t=f` (regular file), not `t=t`: avatars now live in a bounded cache
+        // under the app directory that we manage, not in a temp dir that kitty
+        // is free to delete out from under us.
         write!(
             out,
-            "\x1b_Ga=T,U=1,t=t,f=32,s={},v={},i={},c={},r=1,q=2;{}\x1b\\",
+            "\x1b_Ga=T,U=1,t=f,f=32,s={},v={},i={},c={},r=1,q=2;{}\x1b\\",
             avatar.width,
             avatar.height,
             avatar.id,

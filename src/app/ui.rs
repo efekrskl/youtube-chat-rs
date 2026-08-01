@@ -11,6 +11,8 @@ const COLOR_BORDER: Color = Color::Rgb(186, 104, 255);
 const COLOR_TEXT: Color = Color::Rgb(206, 212, 228);
 const COLOR_TEXT_MUTED: Color = Color::Rgb(123, 131, 152);
 const COLOR_SUB_BG: Color = Color::Rgb(28, 35, 58);
+const COLOR_SUPERCHAT_BG: Color = Color::Rgb(64, 44, 20);
+const COLOR_SUPERCHAT_FG: Color = Color::Rgb(251, 191, 36);
 const COLOR_OK: Color = Color::Rgb(110, 231, 183);
 const COLOR_WARN: Color = Color::Rgb(251, 191, 36);
 const COLOR_ERROR: Color = Color::Rgb(248, 113, 113);
@@ -50,31 +52,44 @@ fn u32_to_color(value: u32) -> Color {
 }
 
 fn build_original_line(text: String, m: &ChatMessage) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        if let Some(avatar) = &m.avatar {
-            let avatar_placeholder: String =
-                std::iter::repeat_n(AVATAR_PLACEHOLDER_UNICODE, avatar.cols as usize).collect();
-            Span::styled(
-                avatar_placeholder,
-                Style::default().fg(u32_to_color(avatar.id)),
-            )
-        } else {
-            Span::raw("")
-        },
-        Span::styled(
-            format!("[{}]", m.timestamp),
-            Style::default().fg(COLOR_TEXT_MUTED),
-        ),
-        Span::raw(if m.is_member { " ⭐ " } else { " " }),
-        Span::styled(
-            format!("{}:", m.author),
+    let mut spans = Vec::with_capacity(7);
+
+    if let Some(avatar) = &m.avatar {
+        let placeholder: String =
+            std::iter::repeat_n(AVATAR_PLACEHOLDER_UNICODE, avatar.cols as usize).collect();
+        spans.push(Span::styled(
+            placeholder,
+            Style::default().fg(u32_to_color(avatar.id)),
+        ));
+    }
+
+    spans.push(Span::styled(
+        format!("[{}]", m.timestamp),
+        Style::default().fg(COLOR_TEXT_MUTED),
+    ));
+
+    if let MessageKind::SuperChat { amount } = &m.kind {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" {amount} "),
             Style::default()
-                .fg(nick_color(&m.author))
+                .fg(COLOR_SUPERCHAT_FG)
+                .bg(COLOR_SUPERCHAT_BG)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled(text, Style::default().fg(COLOR_TEXT)),
-    ]))
+        ));
+    }
+
+    spans.push(Span::raw(if m.is_member { " ⭐ " } else { " " }));
+    spans.push(Span::styled(
+        format!("{}:", m.author),
+        Style::default()
+            .fg(nick_color(&m.author))
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(text, Style::default().fg(COLOR_TEXT)));
+
+    ListItem::new(Line::from(spans))
 }
 
 fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem<'static>> {
@@ -108,22 +123,58 @@ fn build_lines(m: &ChatMessage, chat_width: usize) -> Vec<ListItem<'static>> {
 // todo: remove duplication?
 fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
     match m.kind {
-        MessageKind::Text => {
+        MessageKind::Text | MessageKind::SuperChat { .. } => {
             let prefix = format!("[{}] {}: ", m.timestamp, m.author);
             let prefix_len = prefix.chars().count();
             let body_width = chat_width.saturating_sub(prefix_len).max(1);
             let wrapped = textwrap::wrap(&m.message, body_width);
             wrapped.len().max(1)
         }
-        MessageKind::Subscription => 1,
+        MessageKind::Membership | MessageKind::System => 1,
+    }
+}
+
+fn build_banner(m: &ChatMessage, bg: Color) -> ListItem<'static> {
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            format!(" {} ", m.author),
+            Style::default()
+                .fg(nick_color(&m.author))
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{} ", m.message),
+            Style::default().fg(COLOR_TEXT).bg(bg),
+        ),
+    ]))
+}
+
+fn build_message(m: &ChatMessage, chat_width: usize) -> Vec<ListItem<'static>> {
+    match m.kind {
+        MessageKind::Text | MessageKind::SuperChat { .. } => build_lines(m, chat_width),
+        MessageKind::Membership => vec![build_banner(m, COLOR_SUB_BG)],
+        MessageKind::System => vec![ListItem::new(Line::from(vec![
+            Span::styled(
+                format!("[{}] ", m.timestamp),
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                format!("{} {}", m.author, m.message),
+                Style::default()
+                    .fg(COLOR_TEXT_MUTED)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]))],
     }
 }
 
 fn build_title(app: &AppState) -> Line<'static> {
     let (status_text, status_color) = match app.connection.status {
-        StatusEvent::Connecting => ("Connecting", COLOR_WARN),
-        StatusEvent::Connected => ("Connected", COLOR_OK),
-        StatusEvent::Disconnected => ("Disconnected", COLOR_ERROR),
+        StatusEvent::Connecting => ("Connecting".to_string(), COLOR_WARN),
+        StatusEvent::Connected => ("Connected".to_string(), COLOR_OK),
+        StatusEvent::Reconnecting { attempt } => (format!("Reconnecting ({attempt})"), COLOR_WARN),
+        StatusEvent::Disconnected => ("Disconnected".to_string(), COLOR_ERROR),
     };
 
     Line::from(vec![
@@ -155,6 +206,36 @@ pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: 
     total_rows.saturating_sub(visible_rows)
 }
 
+fn build_footer(app: &AppState) -> Line<'static> {
+    let scroll_mode = if app.scroll_state.auto_scroll {
+        "[FOLLOWING LIVE CHAT]"
+    } else {
+        "[FOLLOW DISABLED]"
+    };
+
+    let mut spans = vec![Span::styled(
+        format!("{scroll_mode} - [Up/Down/PgUp/PgDn/Home/End] scroll - [ESC/q] quit"),
+        Style::default().fg(Color::Rgb(106, 112, 128)),
+    )];
+
+    // Surface backpressure instead of silently swallowing it.
+    if app.dropped_messages > 0 {
+        spans.push(Span::styled(
+            format!(" - {} dropped", app.dropped_messages),
+            Style::default().fg(COLOR_WARN),
+        ));
+    }
+
+    if let Some(err) = &app.connection.last_error {
+        spans.push(Span::styled(
+            format!(" - {err}"),
+            Style::default().fg(COLOR_ERROR),
+        ));
+    }
+
+    Line::from(spans)
+}
+
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -167,30 +248,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let all_rows: Vec<ListItem> = app
         .messages
         .iter()
-        .flat_map(|m| match m.kind {
-            MessageKind::Text => {
-                let lines = build_lines(m, chat_width);
-
-                lines
-            }
-            MessageKind::Subscription => {
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!(" {} ", m.author),
-                        Style::default()
-                            .fg(nick_color(&m.author))
-                            .bg(COLOR_SUB_BG)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("{} ", m.message),
-                        Style::default().fg(COLOR_TEXT).bg(COLOR_SUB_BG),
-                    ),
-                ]);
-
-                vec![ListItem::new(line)]
-            }
-        })
+        .flat_map(|m| build_message(m, chat_width))
         .collect();
 
     let total_rows = all_rows.len();
@@ -214,21 +272,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         )
         .style(Style::default().bg(COLOR_BG));
 
-    let scroll_mode = if app.scroll_state.auto_scroll == true {
-        "[FOLLOWING LIVE CHAT]"
-    } else {
-        "[FOLLOW DISABLED]"
-    };
-
-    let help = Paragraph::new(Line::from(vec![Span::styled(
-        format!(
-            "{} - [Up/Down/PgUp/PgDn/Home/End] scroll - [ESC/q] quit",
-            scroll_mode
-        ),
-        Style::default().fg(Color::Rgb(106, 112, 128)),
-    )]))
-    .style(Style::default().bg(COLOR_BG))
-    .wrap(Wrap { trim: true });
+    let help = Paragraph::new(build_footer(app))
+        .style(Style::default().bg(COLOR_BG))
+        .wrap(Wrap { trim: true });
 
     frame.render_widget(chat, areas[0]);
     frame.render_widget(help, areas[1]);

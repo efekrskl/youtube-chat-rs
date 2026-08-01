@@ -15,6 +15,7 @@ formula = "ytc"
 
 [dependencies]
 anyhow = "1.0.102"
+thiserror = "2.0.19"
 reqwest = "0.13.2"
 tonic = { version = "0.14.5", features = ["_tls-any", "tls-native-roots"] }
 yup-oauth2 = "12.1.2"
@@ -31,7 +32,13 @@ ratatui = "0.30.0"
 textwrap = "0.16.2"
 clap = { version = "4.5.60", features = ["derive"] }
 base64 = "0.22.1"
-image = "0.25.9"
+# Only profile pictures are decoded; the default feature set pulls in a large
+# (and partly unmaintained) image parsing surface we never exercise.
+image = { version = "0.25.9", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+] }
 
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"

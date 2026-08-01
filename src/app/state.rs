@@ -1,6 +1,7 @@
-use crate::app::event::{ChatMessage, StatusEvent};
+use crate::app::event::{ChatMessage, KittyAvatar, StatusEvent};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub struct ScrollState {
     pub scroll_offset: usize,
@@ -23,7 +24,8 @@ pub struct AppState {
     pub messages: VecDeque<ChatMessage>,
     pub connection: ConnectionState,
     pub scroll_state: ScrollState,
-    pub stats: Stats
+    pub stats: Stats,
+    pub dropped_messages: usize,
 }
 
 const MAX_MESSAGES: usize = 500;
@@ -44,6 +46,20 @@ impl AppState {
                 self.scroll_state.scroll_offset = self.scroll_state.scroll_offset.saturating_sub(1);
             }
         }
+    }
+
+    /// Attach an avatar that finished downloading after its messages were
+    /// already displayed.
+    pub fn attach_avatar(&mut self, url: &str, avatar: Arc<KittyAvatar>) {
+        for msg in self.messages.iter_mut() {
+            if msg.avatar.is_none() && msg.avatar_url.as_deref() == Some(url) {
+                msg.avatar = Some(avatar.clone());
+            }
+        }
+    }
+
+    pub fn note_dropped(&mut self, count: usize) {
+        self.dropped_messages = self.dropped_messages.saturating_add(count);
     }
 
     fn scroll_up(&mut self, amount: usize) {
@@ -68,15 +84,19 @@ impl AppState {
     }
 
     pub fn update_status(&mut self, status: StatusEvent) {
+        let connected = matches!(status, StatusEvent::Connected);
         self.connection.status = status;
-        if !matches!(self.connection.status, StatusEvent::Disconnected) {
+        // Only a successful connection clears the previous failure; while we
+        // are still retrying the user should keep seeing why.
+        if connected {
             self.connection.last_error = None;
         }
     }
 
     pub fn set_error(&mut self, error: String) {
+        // The status is owned by the producer now, which reports `Reconnecting`
+        // while it retries; forcing `Disconnected` here hid that.
         self.connection.last_error = Some(error);
-        self.connection.status = StatusEvent::Disconnected;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
