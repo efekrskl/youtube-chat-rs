@@ -1,0 +1,10 @@
+{
+  "kind": "youtube#searchListResponse",
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#channel", "channelId": "UC_test_channel" },
+      "snippet": { "title": "Test Channel" }
+    }
+  ]
+}

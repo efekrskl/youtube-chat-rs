@@ -28,6 +28,9 @@ pub enum YoutubeError {
     #[error("the stream went offline")]
     StreamOffline,
 
+    #[error("no live broadcast found")]
+    NotLive,
+
     #[error("YouTube API error ({status}): {message}")]
     Api { status: u16, message: String },
 
@@ -49,7 +52,7 @@ impl YoutubeError {
             YoutubeError::QuotaExceeded => Recovery::Retry,
             // The broadcast may have restarted with a fresh live chat id.
             YoutubeError::ChatUnavailable => Recovery::ReResolve,
-            YoutubeError::StreamOffline => Recovery::Fatal,
+            YoutubeError::StreamOffline | YoutubeError::NotLive => Recovery::Fatal,
             YoutubeError::Api { status, .. } => match status {
                 401 | 403 => Recovery::RefreshAuth,
                 404 => Recovery::ReResolve,
@@ -176,6 +179,7 @@ mod tests {
     #[test]
     fn an_offline_stream_stops_the_loop() {
         assert_eq!(YoutubeError::StreamOffline.recovery(), Recovery::Fatal);
+        assert_eq!(YoutubeError::NotLive.recovery(), Recovery::Fatal);
     }
 
     #[test]

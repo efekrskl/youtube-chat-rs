@@ -19,7 +19,7 @@ thiserror = "2.0.19"
 reqwest = "0.13.2"
 tonic = { version = "0.14.5", features = ["_tls-any", "tls-native-roots"] }
 yup-oauth2 = "12.1.2"
-tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 dialoguer = "0.12.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -44,6 +44,13 @@ image = { version = "0.25.9", default-features = false, features = [
 [build-dependencies]
 protoc-bin-vendored = "3.2.0"
 tonic-prost-build = "0.14.5"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# NOTE: do not set `panic = "abort"` -- it would bypass the panic hook that
+# restores the terminal out of raw/alternate-screen mode.
 
 # The profile that 'dist' will build with
 [profile.dist]

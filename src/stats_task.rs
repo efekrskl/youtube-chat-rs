@@ -1,9 +1,11 @@
-use crate::app::event::{AppEvent, StatsMessage};
-use crate::youtube::api::YoutubeService;
 use std::time::Duration;
+
 use log::debug;
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
+
+use crate::app::event::{AppEvent, StatsMessage};
+use crate::youtube::api::YoutubeService;
 
 pub fn spawn_stats_task(
     live_video_id: String,
@@ -17,22 +19,27 @@ pub fn spawn_stats_task(
         loop {
             interval.tick().await;
 
+            if tx.is_closed() {
+                break;
+            }
+
             match yt.get_viewer_count_by_video_id(&live_video_id).await {
-                Ok(viewer_count) => {
-                    debug!("fetched viewer count as {}", viewer_count);
+                Ok(Some(viewer_count)) => {
+                    debug!("fetched viewer count as {viewer_count}");
                     if tx
-                        .send(AppEvent::StatsUpdate(StatsMessage {
-                            viewer_count: viewer_count.parse::<u32>().unwrap_or(0),
-                        }))
+                        .send(AppEvent::StatsUpdate(StatsMessage { viewer_count }))
                         .await
                         .is_err()
                     {
                         break;
                     }
                 }
-                _ => {
-                    //todo: send err message
-                }
+                // The stream may simply not report a viewer count; that is not
+                // an error and must not be rendered as "0 viewers".
+                Ok(None) => debug!("no concurrent viewer count reported"),
+                // Don't surface this in the status bar: it would stomp on chat
+                // connection errors, which matter far more.
+                Err(e) => debug!("viewer count fetch failed: {e}"),
             }
         }
     })

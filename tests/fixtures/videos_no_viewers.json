@@ -1,0 +1,14 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "dQw4w9WgXcQ",
+      "snippet": { "channelTitle": "Test Channel" },
+      "liveStreamingDetails": {
+        "actualStartTime": "2026-08-01T10:00:00Z",
+        "activeLiveChatId": "Cg0KC2RRdzR3OVdnWGNR"
+      }
+    }
+  ]
+}

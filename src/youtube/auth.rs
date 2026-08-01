@@ -13,7 +13,7 @@ const TOKEN_CACHE_FILE: &str = "token_cache.json";
 
 pub const SCOPES: &[&str] = &["https://www.googleapis.com/auth/youtube.readonly"];
 
-/// Directory holding the client secret and the token cache.
+/// Directory holding the client secret, the token cache and the log file.
 pub fn app_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME is not set")?;
     let base = PathBuf::from(home).join(APP_DIR);

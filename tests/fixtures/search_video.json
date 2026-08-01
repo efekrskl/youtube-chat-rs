@@ -1,0 +1,10 @@
+{
+  "kind": "youtube#searchListResponse",
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#video", "videoId": "dQw4w9WgXcQ" },
+      "snippet": { "title": "Test Live Stream", "liveBroadcastContent": "live" }
+    }
+  ]
+}

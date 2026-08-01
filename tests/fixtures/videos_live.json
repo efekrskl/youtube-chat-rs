@@ -1,0 +1,22 @@
+{
+  "kind": "youtube#videoListResponse",
+  "etag": "etag-1",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "dQw4w9WgXcQ",
+      "snippet": {
+        "channelId": "UC_test_channel",
+        "title": "Test Live Stream",
+        "channelTitle": "Test Channel",
+        "liveBroadcastContent": "live"
+      },
+      "liveStreamingDetails": {
+        "actualStartTime": "2026-08-01T10:00:00Z",
+        "concurrentViewers": "1337",
+        "activeLiveChatId": "Cg0KC2RRdzR3OVdnWGNR"
+      }
+    }
+  ],
+  "pageInfo": { "totalResults": 1, "resultsPerPage": 1 }
+}

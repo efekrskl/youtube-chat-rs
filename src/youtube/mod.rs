@@ -263,7 +263,10 @@ mod tests {
                     delay >= BASE_RECONNECT_DELAY,
                     "attempt {attempt} seed {seed}"
                 );
-                assert!(delay <= MAX_RECONNECT_DELAY, "attempt {attempt} seed {seed}");
+                assert!(
+                    delay <= MAX_RECONNECT_DELAY,
+                    "attempt {attempt} seed {seed}"
+                );
             }
         }
     }
