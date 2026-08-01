@@ -68,15 +68,19 @@ impl AppState {
     }
 
     pub fn update_status(&mut self, status: StatusEvent) {
+        let connected = matches!(status, StatusEvent::Connected);
         self.connection.status = status;
-        if !matches!(self.connection.status, StatusEvent::Disconnected) {
+        // Only a successful connection clears the previous failure; while we
+        // are still retrying the user should keep seeing why.
+        if connected {
             self.connection.last_error = None;
         }
     }
 
     pub fn set_error(&mut self, error: String) {
+        // The status is owned by the producer now, which reports `Reconnecting`
+        // while it retries; forcing `Disconnected` here hid that.
         self.connection.last_error = Some(error);
-        self.connection.status = StatusEvent::Disconnected;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {

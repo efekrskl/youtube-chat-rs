@@ -15,6 +15,7 @@ formula = "ytc"
 
 [dependencies]
 anyhow = "1.0.102"
+thiserror = "2.0.19"
 reqwest = "0.13.2"
 tonic = { version = "0.14.5", features = ["_tls-any", "tls-native-roots"] }
 yup-oauth2 = "12.1.2"
