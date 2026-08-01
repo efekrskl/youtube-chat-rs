@@ -4,13 +4,19 @@ use ratatui::crossterm::event::KeyEvent;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    Tick,
     Input(KeyEvent),
     Chat(ChatMessage),
+    /// An avatar finished downloading out-of-band; attach it to the messages
+    /// that are already on screen.
+    AvatarReady {
+        url: String,
+        avatar: Arc<KittyAvatar>,
+    },
     Status(StatusEvent),
     Error(String),
     StatsUpdate(StatsMessage),
-    Quit,
+    /// The chat producer dropped messages because the UI could not keep up.
+    Dropped(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -34,18 +40,28 @@ pub struct ChatMessage {
     pub message: String,
     pub kind: MessageKind,
     pub avatar: Option<Arc<KittyAvatar>>,
-    pub is_member: bool
+    /// URL the avatar will arrive under, used to patch the message later.
+    pub avatar_url: Option<String>,
+    pub is_member: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageKind {
     Text,
-    Subscription,
+    /// Paid message; carries the formatted amount as YouTube reports it.
+    SuperChat {
+        amount: String,
+    },
+    /// New member, milestone, gifted membership.
+    Membership,
+    /// Moderation and lifecycle notices (deleted message, ban, chat ended).
+    System,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusEvent {
     Connecting,
     Connected,
+    Reconnecting { attempt: u32 },
     Disconnected,
 }
