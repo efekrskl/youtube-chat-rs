@@ -1,54 +1,49 @@
-use crate::app::event::{AppEvent, KittyAvatar, StatusEvent};
-use crate::app::state::{AppState, ConnectionState, ScrollState, Stats};
-use crate::app::ui::{draw, max_scroll_for_viewport};
+use std::collections::HashSet;
+use std::io::{Stdout, Write, stdout};
+use std::time::{Duration, Instant};
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::collections::HashSet;
-use std::io::{Stdout, Write, stdout};
 use tokio::sync::mpsc;
+
+use crate::app::event::{AppEvent, KittyAvatar};
+use crate::app::state::AppState;
+use crate::app::ui::draw;
 
 pub mod event;
 pub mod state;
-mod ui;
+pub mod ui;
+
+/// Cap redraws so a fast-moving chat cannot spend the whole runtime painting.
+const MIN_REDRAW_INTERVAL: Duration = Duration::from_millis(33);
 
 struct Graphics {
     kitty_supported: bool,
     loaded_avatar_ids: HashSet<u32>,
 }
+
 pub struct App {
     pub state: AppState,
     graphics: Graphics,
+    last_draw: Option<Instant>,
 }
 
 impl App {
     pub fn new(title: String) -> Self {
         Self {
-            state: AppState {
-                title,
-                messages: Default::default(),
-                connection: ConnectionState {
-                    status: StatusEvent::Connecting,
-                    last_error: None,
-                },
-                scroll_state: ScrollState {
-                    scroll_offset: 0,
-                    auto_scroll: true,
-                    visible_rows: 1,
-                    max_scroll_rows: 0,
-                },
-                stats: Stats { viewer_count: 0 },
-                dropped_messages: 0,
-            },
+            state: AppState::new(title),
             graphics: Graphics {
                 kitty_supported: std::env::var("TERM")
-                    .map(|term| matches!(term.as_str(), "xterm-kitty"))
+                    .map(|term| term == "xterm-kitty")
                     .unwrap_or(false),
                 loaded_avatar_ids: HashSet::new(),
             },
+            last_draw: None,
         }
     }
 
+    /// Returns true when the app should quit.
     pub fn on_event(&mut self, event: AppEvent) -> bool {
         match event {
             AppEvent::Chat(mut msg) => {
@@ -60,7 +55,7 @@ impl App {
                     msg.avatar = None;
                     msg.avatar_url = None;
                 }
-                self.state.push_message(msg)
+                self.state.push_message(msg);
             }
             AppEvent::AvatarReady { url, avatar } => {
                 if self.graphics.kitty_supported {
@@ -82,18 +77,24 @@ impl App {
         false
     }
 
-    async fn handle_tui(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    ) -> anyhow::Result<()> {
-        terminal.draw(|f| draw(f, &self.state))?;
-        let size = terminal.size()?;
-        let visible_rows = size.height.saturating_sub(3) as usize;
-        let chat_width = size.width.saturating_sub(2) as usize;
-        let max_scroll = max_scroll_for_viewport(&self.state, chat_width, visible_rows);
-        self.state.update_scroll_state(visible_rows, max_scroll);
+    fn render(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+        let mut metrics = None;
+        terminal.draw(|f| metrics = Some(draw(f, &self.state)))?;
+
+        // `draw` already measured the layout; recomputing it here is what used
+        // to make the viewport height disagree with what was rendered.
+        if let Some(metrics) = metrics {
+            self.state
+                .update_scroll_state(metrics.visible_rows, metrics.max_scroll_rows);
+        }
+        self.last_draw = Some(Instant::now());
 
         Ok(())
+    }
+
+    fn should_redraw(&self) -> bool {
+        self.last_draw
+            .is_none_or(|last| last.elapsed() >= MIN_REDRAW_INTERVAL)
     }
 
     pub async fn run(
@@ -101,7 +102,7 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         mut rx: mpsc::Receiver<AppEvent>,
     ) -> anyhow::Result<()> {
-        self.handle_tui(terminal).await?;
+        self.render(terminal)?;
 
         loop {
             let Some(ev) = rx.recv().await else { break };
@@ -109,14 +110,27 @@ impl App {
                 break;
             }
 
+            // Drain whatever else is queued so a burst costs one redraw.
             while let Ok(ev) = rx.try_recv() {
                 if self.on_event(ev) {
                     return Ok(());
                 }
             }
 
-            self.handle_tui(terminal).await?;
+            if self.should_redraw() {
+                self.render(terminal)?;
+            } else {
+                // Let the pending events settle, then paint once.
+                tokio::time::sleep(MIN_REDRAW_INTERVAL).await;
+                while let Ok(ev) = rx.try_recv() {
+                    if self.on_event(ev) {
+                        return Ok(());
+                    }
+                }
+                self.render(terminal)?;
+            }
         }
+
         Ok(())
     }
 }
@@ -128,9 +142,9 @@ fn prepare_kitty_avatar(
     let mut out = stdout();
 
     if loaded_avatar_ids.insert(avatar.id) {
-        // `t=f` (regular file), not `t=t`: avatars now live in a bounded cache
-        // under the app directory that we manage, not in a temp dir that kitty
-        // is free to delete out from under us.
+        // `t=f` (regular file), not `t=t`: the avatars now live in a bounded
+        // cache under the app directory that we manage, not in a temp dir that
+        // kitty is free to delete out from under us.
         write!(
             out,
             "\x1b_Ga=T,U=1,t=f,f=32,s={},v={},i={},c={},r=1,q=2;{}\x1b\\",
@@ -140,8 +154,8 @@ fn prepare_kitty_avatar(
             avatar.cols,
             STANDARD.encode(avatar.path.as_bytes()),
         )?;
+        out.flush()?;
     }
 
-    out.flush()?;
     Ok(())
 }
