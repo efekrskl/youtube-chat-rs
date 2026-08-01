@@ -20,10 +20,16 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
 use yup_oauth2::authenticator::DefaultAuthenticator;
 
-const GRPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
-const GRPC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
-const GRPC_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(1);
-const TCP_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
+/// A TLS handshake on a cold DNS cache regularly needs more than a second; the
+/// old 1s budget made every reconnect fail exactly when the network was already
+/// struggling.
+const GRPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Google's frontends reject clients that ping more often than their minimum
+/// interval with `GOAWAY / ENHANCE_YOUR_CALM (too_many_pings)`. Pinging once a
+/// second was tearing the stream down on a regular cadence.
+const GRPC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const GRPC_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+const TCP_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(60);
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -261,9 +267,11 @@ impl YoutubeService {
             .tls_config(tls)?
             .connect_timeout(GRPC_CONNECT_TIMEOUT)
             .tcp_keepalive(Some(TCP_KEEP_ALIVE_INTERVAL))
+            .tcp_nodelay(true)
             .http2_keep_alive_interval(GRPC_KEEP_ALIVE_INTERVAL)
             .keep_alive_timeout(GRPC_KEEP_ALIVE_TIMEOUT)
             .keep_alive_while_idle(true)
+            .http2_adaptive_window(true)
             .connect()
             .await?;
         debug!("gRPC channel connected");
