@@ -41,8 +41,8 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     debug!("application start");
 
-    let token = auth().await?;
-    let yt_service = YoutubeService::new(&token)?;
+    let auth = auth().await?;
+    let yt_service = YoutubeService::new(auth)?;
     let args = Args::parse();
     let video_id = match (args.video, args.channel) {
         (Some(video_id), None) => video_id,
