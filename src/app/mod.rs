@@ -68,7 +68,6 @@ impl App {
             AppEvent::StatsUpdate(stats) => self.state.update_stats(stats.viewer_count),
             AppEvent::Status(status) => self.state.update_status(status),
             AppEvent::Error(error) => self.state.set_error(error),
-            _ => {}
         }
 
         false

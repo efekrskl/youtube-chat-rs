@@ -1,10 +1,10 @@
-use crate::app::event::{AppEvent, ChatMessage, KittyAvatar, MessageKind, StatusEvent};
+use crate::app::event::{AppEvent, KittyAvatar, StatusEvent};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use crate::youtube::auth::SCOPES;
 use crate::youtube::error::YoutubeError;
-use crate::youtube::message::{MessageDedup, is_chat_ended};
+use crate::youtube::message::{MessageDedup, is_chat_ended, map_message};
 use anyhow::{Context, bail};
 use image::imageops::FilterType;
 use log::debug;
@@ -359,8 +359,6 @@ impl YoutubeService {
             let mut chat_ended = false;
 
             for item in resp.items.iter() {
-                use crate::youtube_api_v3::live_chat_message_snippet::type_wrapper::Type as MessageType;
-
                 if is_chat_ended(item) {
                     chat_ended = true;
                 }
@@ -371,71 +369,24 @@ impl YoutubeService {
                     continue;
                 }
 
-                let Some(snippet) = item.snippet.as_ref() else {
-                    debug!("skipping item without snippet");
+                let Some(mut msg) = map_message(item) else {
                     continue;
                 };
 
-                match snippet.r#type() {
-                    MessageType::TextMessageEvent => {
-                        // todo: get these properly
-                        let message = snippet
-                            .display_message
-                            .as_deref()
-                            .unwrap_or("<empty>")
-                            .to_string();
-                        let author = item
-                            .author_details
-                            .as_ref()
-                            .and_then(|d| d.display_name.as_ref())
-                            .map(String::as_str)
-                            .unwrap_or("<unknown>")
-                            .to_string();
-                        let timestamp = snippet
-                            .published_at
-                            .as_deref()
-                            .unwrap()
-                            .get(11..16)
-                            .unwrap_or("--:--")
-                            .to_string();
-                        let is_member = item
-                            .author_details
-                            .as_ref()
-                            .and_then(|d| d.is_chat_sponsor.to_owned())
-                            .unwrap_or(false);
-                        let avatar = if let Some(url) = item
-                            .author_details
-                            .as_ref()
-                            .and_then(|d| d.profile_image_url.as_deref())
-                        {
-                            if let Some(cached) = avatar_cache.get_mut(url) {
-                                let avatar = Arc::new(cached.clone());
-                                Some(avatar)
-                            } else if let Some(fetched) = self.fetch_avatar(url).await {
-                                let avatar = Arc::new(fetched.clone());
-                                avatar_cache.insert(url.to_string(), fetched);
-                                Some(avatar)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        tx.send(AppEvent::Chat(ChatMessage {
-                            author,
-                            message,
-                            kind: MessageKind::Text,
-                            timestamp,
-                            avatar,
-                            is_member,
-                        }))
-                        .await
-                        .map_err(|_| YoutubeError::Other(anyhow::anyhow!("UI closed")))?;
-                    }
-                    MessageType::NewSponsorEvent => {}
-                    _ => {}
+                if let Some(url) = msg.avatar_url.clone() {
+                    msg.avatar = if let Some(cached) = avatar_cache.get(&url) {
+                        Some(Arc::new(cached.clone()))
+                    } else if let Some(fetched) = self.fetch_avatar(&url).await {
+                        avatar_cache.insert(url, fetched.clone());
+                        Some(Arc::new(fetched))
+                    } else {
+                        None
+                    };
                 }
+
+                tx.send(AppEvent::Chat(msg))
+                    .await
+                    .map_err(|_| YoutubeError::Other(anyhow::anyhow!("UI closed")))?;
             }
 
             // Only advance the resume point when the server gave us one; a

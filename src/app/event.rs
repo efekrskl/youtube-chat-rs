@@ -4,13 +4,11 @@ use ratatui::crossterm::event::KeyEvent;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    Tick,
     Input(KeyEvent),
     Chat(ChatMessage),
     Status(StatusEvent),
     Error(String),
     StatsUpdate(StatsMessage),
-    Quit,
 }
 
 #[derive(Debug, Clone)]
@@ -34,22 +32,28 @@ pub struct ChatMessage {
     pub message: String,
     pub kind: MessageKind,
     pub avatar: Option<Arc<KittyAvatar>>,
-    pub is_member: bool
+    /// Where the author's avatar can be fetched from, if they have one.
+    pub avatar_url: Option<String>,
+    pub is_member: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageKind {
     Text,
-    Subscription,
+    /// Paid message; carries the formatted amount as YouTube reports it.
+    SuperChat {
+        amount: String,
+    },
+    /// New member, milestone, gifted membership.
+    Membership,
+    /// Moderation and lifecycle notices (deleted message, ban, chat ended).
+    System,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusEvent {
     Connecting,
     Connected,
-    /// Retrying after a failure; `attempt` counts consecutive failures.
-    Reconnecting {
-        attempt: u32,
-    },
+    Reconnecting { attempt: u32 },
     Disconnected,
 }
