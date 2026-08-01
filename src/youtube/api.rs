@@ -2,11 +2,11 @@ use crate::app::event::{AppEvent, ChatMessage, KittyAvatar, MessageKind, StatusE
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
+use crate::youtube::auth::SCOPES;
 use anyhow::{Context, bail};
 use image::imageops::FilterType;
 use log::debug;
 use reqwest::Url;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs::File;
@@ -18,15 +18,19 @@ use tokio::sync::mpsc;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
+use yup_oauth2::authenticator::DefaultAuthenticator;
 
 const GRPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const GRPC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const GRPC_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(1);
 const TCP_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
+const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Clone)]
 pub struct YoutubeService {
-    token: String,
+    auth: Arc<DefaultAuthenticator>,
     pub http: reqwest::Client,
 }
 
@@ -36,32 +40,37 @@ pub struct LiveVideoDetails {
 }
 
 impl YoutubeService {
-    pub fn new(token: &str) -> anyhow::Result<YoutubeService> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))?,
-        );
-
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
+    pub fn new(auth: Arc<DefaultAuthenticator>) -> anyhow::Result<YoutubeService> {
+        // No default Authorization header: this client also fetches avatar URLs
+        // that come out of API payloads, and the OAuth token must never leave
+        // googleapis.com.
+        let http = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .user_agent(concat!("ytc/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
-        Ok(Self {
-            token: token.to_string(),
-            http: client,
-        })
+        Ok(Self { auth, http })
     }
 }
 
 impl YoutubeService {
-    fn auth_req(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req.bearer_auth(&self.token)
+    /// Fetch a valid access token. `yup-oauth2` serves it from its cache and
+    /// silently refreshes once it is close to expiry, which is what keeps a
+    /// multi-hour broadcast alive.
+    async fn access_token(&self) -> anyhow::Result<String> {
+        let token = self.auth.token(SCOPES).await?;
+
+        match token.token() {
+            Some(token) => Ok(token.to_string()),
+            None => bail!("OAuth provider returned an empty access token"),
+        }
     }
 
     async fn make_yt_req(&self, url: Url) -> anyhow::Result<String> {
         debug!("YouTube request: {}", url);
-        let res = self.auth_req(self.http.get(url)).send().await?;
+        let token = self.access_token().await?;
+        let res = self.http.get(url).bearer_auth(token).send().await?;
         let status = res.status();
         let body = res.text().await?;
         debug!("YouTube response status={} body_len={}", status, body.len());
@@ -287,7 +296,10 @@ impl YoutubeService {
             };
 
             let mut request = Request::new(req);
-            let auth: MetadataValue<_> = format!("Bearer {}", self.token).parse()?;
+            // Re-read the token on every cycle so a reconnect after the hour
+            // mark picks up the refreshed one.
+            let token = self.access_token().await?;
+            let auth: MetadataValue<_> = format!("Bearer {token}").parse()?;
             request.metadata_mut().insert("authorization", auth);
 
             let mut stream = client.stream_list(request).await?.into_inner();
