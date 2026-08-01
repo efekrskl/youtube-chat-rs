@@ -3,6 +3,8 @@ use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
 use crate::youtube::auth::SCOPES;
+use crate::youtube::error::YoutubeError;
+use crate::youtube::message::{MessageDedup, is_chat_ended};
 use anyhow::{Context, bail};
 use image::imageops::FilterType;
 use log::debug;
@@ -33,6 +35,17 @@ const TCP_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(60);
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+const YOUTUBE_GRPC_ENDPOINT: &str = "https://youtube.googleapis.com";
+const MAX_MESSAGES_PER_PAGE: u32 = 200;
+
+/// Outcome of one `StreamList` subscription.
+pub enum StreamOutcome {
+    /// The server closed the stream; resubscribe with the token we hold.
+    Resubscribe,
+    /// The chat is over for good.
+    Ended,
+}
 
 #[derive(Clone)]
 pub struct YoutubeService {
@@ -71,6 +84,17 @@ impl YoutubeService {
             Some(token) => Ok(token.to_string()),
             None => bail!("OAuth provider returned an empty access token"),
         }
+    }
+
+    /// Discard the cached token and get a new one. Used after the server told
+    /// us the current one is no longer accepted.
+    pub async fn refresh_token(&self) -> Result<(), YoutubeError> {
+        self.auth
+            .force_refreshed_token(SCOPES)
+            .await
+            .map_err(|e| YoutubeError::Auth(e.to_string()))?;
+        debug!("access token force-refreshed");
+        Ok(())
     }
 
     async fn make_yt_req(&self, url: Url) -> anyhow::Result<String> {
@@ -256,14 +280,13 @@ impl YoutubeService {
         })
     }
 
-    pub async fn stream_chat(
-        &self,
-        live_chat_id: &str,
-        tx: mpsc::Sender<AppEvent>,
-    ) -> anyhow::Result<()> {
-        debug!("listen start live_chat_id={}", live_chat_id);
+    /// Build the gRPC channel. Created once and reused across reconnects --
+    /// tonic reconnects the underlying transport lazily, so we do not pay for
+    /// DNS + TLS on every retry.
+    pub async fn connect_chat_channel(&self) -> Result<Channel, YoutubeError> {
         let tls = ClientTlsConfig::new().with_native_roots();
-        let channel: Channel = Channel::from_static("https://youtube.googleapis.com")
+
+        let channel = Channel::from_static(YOUTUBE_GRPC_ENDPOINT)
             .tls_config(tls)?
             .connect_timeout(GRPC_CONNECT_TIMEOUT)
             .tcp_keepalive(Some(TCP_KEEP_ALIVE_INTERVAL))
@@ -274,135 +297,159 @@ impl YoutubeService {
             .http2_adaptive_window(true)
             .connect()
             .await?;
-        debug!("gRPC channel connected");
-        tx.send(AppEvent::Status(StatusEvent::Connected)).await?;
 
+        debug!("gRPC channel connected");
+        Ok(channel)
+    }
+
+    /// Consume one `StreamList` subscription, forwarding messages to the UI.
+    ///
+    /// `page_token` and `dedup` are owned by the caller so that a reconnect
+    /// resumes exactly where the previous stream stopped instead of replaying
+    /// (or skipping) the backlog.
+    pub async fn stream_chat(
+        &self,
+        channel: Channel,
+        live_chat_id: &str,
+        page_token: &mut Option<String>,
+        dedup: &mut MessageDedup,
+        avatar_cache: &mut HashMap<String, KittyAvatar>,
+        tx: &mpsc::Sender<AppEvent>,
+    ) -> Result<StreamOutcome, YoutubeError> {
         let mut client = V3DataLiveChatMessageServiceClient::new(channel);
 
-        let mut next_page_token: Option<String> = None;
-        let mut poll_cycle: usize = 0;
-        let mut avatar_cache: HashMap<String, KittyAvatar> = HashMap::new();
+        // Hoisted out of the old per-cycle loop: these are identical every time.
+        let parts = vec![
+            "id".to_string(),
+            "snippet".to_string(),
+            "authorDetails".to_string(),
+        ];
+        let token = self.access_token().await.map_err(YoutubeError::Other)?;
+        let auth: MetadataValue<_> = format!("Bearer {token}")
+            .parse()
+            .map_err(|_| YoutubeError::Auth("malformed access token".to_string()))?;
 
-        loop {
-            poll_cycle += 1;
+        let req = LiveChatMessageListRequest {
+            part: parts,
+            live_chat_id: Some(live_chat_id.to_string()),
+            max_results: Some(MAX_MESSAGES_PER_PAGE),
+            page_token: page_token.clone(),
+            profile_image_size: Some(0),
+            hl: Some("en".to_string()),
+        };
+
+        let mut request = Request::new(req);
+        request.metadata_mut().insert("authorization", auth);
+
+        let mut stream = client.stream_list(request).await?.into_inner();
+        let _ = tx.send(AppEvent::Status(StatusEvent::Connected)).await;
+
+        while let Some(resp) = stream.message().await? {
             debug!(
-                "stream poll cycle={} page_token_present={}",
-                poll_cycle,
-                next_page_token.is_some()
+                "stream page items={} next_page_token_present={}",
+                resp.items.len(),
+                resp.next_page_token.is_some()
             );
-            let req = LiveChatMessageListRequest {
-                part: vec![
-                    "id".to_string(),
-                    "snippet".to_string(),
-                    "authorDetails".to_string(),
-                ],
-                live_chat_id: Some(live_chat_id.to_string()),
-                max_results: Some(20),
-                page_token: next_page_token.clone(),
-                profile_image_size: Some(0),
-                hl: Some("en".to_string()),
-            };
 
-            let mut request = Request::new(req);
-            // Re-read the token on every cycle so a reconnect after the hour
-            // mark picks up the refreshed one.
-            let token = self.access_token().await?;
-            let auth: MetadataValue<_> = format!("Bearer {token}").parse()?;
-            request.metadata_mut().insert("authorization", auth);
+            // The broadcast itself ended; no amount of reconnecting helps.
+            if resp.offline_at.is_some() {
+                return Err(YoutubeError::StreamOffline);
+            }
 
-            let mut stream = client.stream_list(request).await?.into_inner();
-            let mut got_page = false;
+            let mut chat_ended = false;
 
-            while let Some(resp) = stream.message().await? {
-                got_page = true;
-                debug!(
-                    "stream page items={} next_page_token_present={}",
-                    resp.items.len(),
-                    resp.next_page_token.is_some()
-                );
-                for item in resp.items.iter() {
-                    use crate::youtube_api_v3::live_chat_message_snippet::type_wrapper::Type as MessageType;
+            for item in resp.items.iter() {
+                use crate::youtube_api_v3::live_chat_message_snippet::type_wrapper::Type as MessageType;
 
-                    let Some(snippet) = item.snippet.as_ref() else {
-                        debug!("skipping item without snippet");
-                        continue;
-                    };
-
-                    match snippet.r#type() {
-                        MessageType::TextMessageEvent => {
-                            // todo: get these properly
-                            let message = snippet
-                                .display_message
-                                .as_deref()
-                                .unwrap_or("<empty>")
-                                .to_string();
-                            let author = item
-                                .author_details
-                                .as_ref()
-                                .and_then(|d| d.display_name.as_ref())
-                                .map(String::as_str)
-                                .unwrap_or("<unknown>")
-                                .to_string();
-                            let timestamp = snippet
-                                .published_at
-                                .as_deref()
-                                .unwrap()
-                                .get(11..16)
-                                .unwrap_or("--:--")
-                                .to_string();
-                            let is_member = item
-                                .author_details
-                                .as_ref()
-                                .and_then(|d| d.is_chat_sponsor.to_owned())
-                                .unwrap_or(false);
-                            let avatar = if let Some(url) = item
-                                .author_details
-                                .as_ref()
-                                .and_then(|d| d.profile_image_url.as_deref())
-                            {
-                                if let Some(cached) = avatar_cache.get_mut(url) {
-                                    let avatar = Arc::new(cached.clone());
-                                    Some(avatar)
-                                } else if let Some(fetched) = self.fetch_avatar(url).await {
-                                    let avatar = Arc::new(fetched.clone());
-                                    avatar_cache.insert(url.to_string(), fetched);
-                                    Some(avatar)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
-
-                            tx.send(AppEvent::Chat(ChatMessage {
-                                author,
-                                message,
-                                kind: MessageKind::Text,
-                                timestamp,
-                                avatar,
-                                is_member,
-                            }))
-                            .await?;
-                        }
-                        MessageType::NewSponsorEvent => {}
-                        _ => {}
-                    }
+                if is_chat_ended(item) {
+                    chat_ended = true;
                 }
 
-                next_page_token = resp.next_page_token.clone();
+                // Resuming from a page token replays part of the backlog, so
+                // ids we have already rendered must be skipped.
+                if !dedup.insert(item.id.as_deref()) {
+                    continue;
+                }
+
+                let Some(snippet) = item.snippet.as_ref() else {
+                    debug!("skipping item without snippet");
+                    continue;
+                };
+
+                match snippet.r#type() {
+                    MessageType::TextMessageEvent => {
+                        // todo: get these properly
+                        let message = snippet
+                            .display_message
+                            .as_deref()
+                            .unwrap_or("<empty>")
+                            .to_string();
+                        let author = item
+                            .author_details
+                            .as_ref()
+                            .and_then(|d| d.display_name.as_ref())
+                            .map(String::as_str)
+                            .unwrap_or("<unknown>")
+                            .to_string();
+                        let timestamp = snippet
+                            .published_at
+                            .as_deref()
+                            .unwrap()
+                            .get(11..16)
+                            .unwrap_or("--:--")
+                            .to_string();
+                        let is_member = item
+                            .author_details
+                            .as_ref()
+                            .and_then(|d| d.is_chat_sponsor.to_owned())
+                            .unwrap_or(false);
+                        let avatar = if let Some(url) = item
+                            .author_details
+                            .as_ref()
+                            .and_then(|d| d.profile_image_url.as_deref())
+                        {
+                            if let Some(cached) = avatar_cache.get_mut(url) {
+                                let avatar = Arc::new(cached.clone());
+                                Some(avatar)
+                            } else if let Some(fetched) = self.fetch_avatar(url).await {
+                                let avatar = Arc::new(fetched.clone());
+                                avatar_cache.insert(url.to_string(), fetched);
+                                Some(avatar)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        tx.send(AppEvent::Chat(ChatMessage {
+                            author,
+                            message,
+                            kind: MessageKind::Text,
+                            timestamp,
+                            avatar,
+                            is_member,
+                        }))
+                        .await
+                        .map_err(|_| YoutubeError::Other(anyhow::anyhow!("UI closed")))?;
+                    }
+                    MessageType::NewSponsorEvent => {}
+                    _ => {}
+                }
             }
 
-            if !got_page {
-                debug!("stream produced no pages in this cycle");
+            // Only advance the resume point when the server gave us one; a
+            // final page without a token used to wipe a perfectly good one.
+            if resp.next_page_token.is_some() {
+                *page_token = resp.next_page_token.clone();
             }
 
-            if next_page_token.is_none() {
-                debug!("next_page_token absent, exiting listen loop");
-                break;
+            if chat_ended {
+                return Ok(StreamOutcome::Ended);
             }
         }
 
-        debug!("listen finished");
-        Ok(())
+        // A completed server stream is normal: resubscribe from where we are.
+        Ok(StreamOutcome::Resubscribe)
     }
 }

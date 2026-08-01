@@ -43,9 +43,13 @@ pub enum MessageKind {
     Subscription,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusEvent {
     Connecting,
     Connected,
+    /// Retrying after a failure; `attempt` counts consecutive failures.
+    Reconnecting {
+        attempt: u32,
+    },
     Disconnected,
 }

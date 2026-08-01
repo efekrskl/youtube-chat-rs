@@ -59,8 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel(100);
 
     spawn_input_task(tx.clone());
-    spawn_stats_task(video_id, yt_service.clone(), tx.clone());
-    spawn_youtube_chat_task(yt_service, live_video.chat_id, tx);
+    spawn_stats_task(video_id.clone(), yt_service.clone(), tx.clone());
+    spawn_youtube_chat_task(yt_service, video_id, live_video.chat_id, tx);
 
     let app = App::new(live_video.channel_name);
 

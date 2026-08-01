@@ -121,9 +121,10 @@ fn row_count_for_message(m: &ChatMessage, chat_width: usize) -> usize {
 
 fn build_title(app: &AppState) -> Line<'static> {
     let (status_text, status_color) = match app.connection.status {
-        StatusEvent::Connecting => ("Connecting", COLOR_WARN),
-        StatusEvent::Connected => ("Connected", COLOR_OK),
-        StatusEvent::Disconnected => ("Disconnected", COLOR_ERROR),
+        StatusEvent::Connecting => ("Connecting".to_string(), COLOR_WARN),
+        StatusEvent::Connected => ("Connected".to_string(), COLOR_OK),
+        StatusEvent::Reconnecting { attempt } => (format!("Reconnecting ({attempt})"), COLOR_WARN),
+        StatusEvent::Disconnected => ("Disconnected".to_string(), COLOR_ERROR),
     };
 
     Line::from(vec![
