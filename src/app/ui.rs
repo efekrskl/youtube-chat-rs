@@ -206,6 +206,36 @@ pub fn max_scroll_for_viewport(app: &AppState, chat_width: usize, visible_rows: 
     total_rows.saturating_sub(visible_rows)
 }
 
+fn build_footer(app: &AppState) -> Line<'static> {
+    let scroll_mode = if app.scroll_state.auto_scroll {
+        "[FOLLOWING LIVE CHAT]"
+    } else {
+        "[FOLLOW DISABLED]"
+    };
+
+    let mut spans = vec![Span::styled(
+        format!("{scroll_mode} - [Up/Down/PgUp/PgDn/Home/End] scroll - [ESC/q] quit"),
+        Style::default().fg(Color::Rgb(106, 112, 128)),
+    )];
+
+    // Surface backpressure instead of silently swallowing it.
+    if app.dropped_messages > 0 {
+        spans.push(Span::styled(
+            format!(" - {} dropped", app.dropped_messages),
+            Style::default().fg(COLOR_WARN),
+        ));
+    }
+
+    if let Some(err) = &app.connection.last_error {
+        spans.push(Span::styled(
+            format!(" - {err}"),
+            Style::default().fg(COLOR_ERROR),
+        ));
+    }
+
+    Line::from(spans)
+}
+
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -242,21 +272,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         )
         .style(Style::default().bg(COLOR_BG));
 
-    let scroll_mode = if app.scroll_state.auto_scroll == true {
-        "[FOLLOWING LIVE CHAT]"
-    } else {
-        "[FOLLOW DISABLED]"
-    };
-
-    let help = Paragraph::new(Line::from(vec![Span::styled(
-        format!(
-            "{} - [Up/Down/PgUp/PgDn/Home/End] scroll - [ESC/q] quit",
-            scroll_mode
-        ),
-        Style::default().fg(Color::Rgb(106, 112, 128)),
-    )]))
-    .style(Style::default().bg(COLOR_BG))
-    .wrap(Wrap { trim: true });
+    let help = Paragraph::new(build_footer(app))
+        .style(Style::default().bg(COLOR_BG))
+        .wrap(Wrap { trim: true });
 
     frame.render_widget(chat, areas[0]);
     frame.render_widget(help, areas[1]);

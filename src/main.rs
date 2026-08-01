@@ -8,7 +8,7 @@ use clap::Parser;
 use crate::app::App;
 use crate::input_task::spawn_input_task;
 use crate::youtube::api::YoutubeService;
-use crate::youtube::auth::auth;
+use crate::youtube::auth::{app_dir, auth};
 use crate::youtube::spawn_youtube_chat_task;
 use log::debug;
 use tokio::sync::mpsc;
@@ -17,6 +17,9 @@ use crate::stats_task::spawn_stats_task;
 pub mod youtube_api_v3 {
     tonic::include_proto!("youtube.api.v3");
 }
+/// Room for a burst of chat without the producer ever having to block.
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "ytc",
@@ -42,7 +45,8 @@ async fn main() -> anyhow::Result<()> {
     debug!("application start");
 
     let auth = auth().await?;
-    let yt_service = YoutubeService::new(auth)?;
+    let avatar_dir = avatar_dir()?;
+    let yt_service = YoutubeService::new(auth, avatar_dir)?;
     let args = Args::parse();
     let video_id = match (args.video, args.channel) {
         (Some(video_id), None) => video_id,
@@ -56,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     let live_video = yt_service.find_live_video_details_by_video_id(&video_id).await?;
 
     let mut terminal = ratatui::init();
-    let (tx, rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
 
     spawn_input_task(tx.clone());
     spawn_stats_task(video_id.clone(), yt_service.clone(), tx.clone());
@@ -67,4 +71,19 @@ async fn main() -> anyhow::Result<()> {
     app.run(&mut terminal, rx).await?;
     ratatui::restore();
     Ok(())
+}
+
+/// Avatars are written to a private per-user directory rather than a
+/// predictable path in a shared `/tmp`.
+fn avatar_dir() -> anyhow::Result<std::path::PathBuf> {
+    let dir = app_dir()?.join("avatars");
+    std::fs::create_dir_all(&dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+
+    Ok(dir)
 }

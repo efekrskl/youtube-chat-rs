@@ -1,17 +1,17 @@
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use log::{debug, warn};
 use tokio::sync::mpsc;
 use tonic::transport::Channel;
 
-use crate::app::event::{AppEvent, KittyAvatar, StatusEvent};
+use crate::app::event::{AppEvent, StatusEvent};
 use crate::youtube::api::{StreamOutcome, YoutubeService};
 use crate::youtube::error::{Recovery, YoutubeError};
 use crate::youtube::message::MessageDedup;
 
 pub mod api;
 pub mod auth;
+pub mod avatar;
 pub mod error;
 pub mod message;
 pub mod models;
@@ -55,7 +55,6 @@ pub fn spawn_youtube_chat_task(
             tx,
             page_token: None,
             dedup: MessageDedup::default(),
-            avatar_cache: HashMap::new(),
             channel: None,
             attempt: 0,
         };
@@ -74,9 +73,6 @@ struct ChatSession {
     /// backlog on top.
     page_token: Option<String>,
     dedup: MessageDedup,
-    /// Also kept across reconnects: rebuilding it meant re-downloading every
-    /// avatar precisely when the network was already unhealthy.
-    avatar_cache: HashMap<String, KittyAvatar>,
     channel: Option<Channel>,
     attempt: u32,
 }
@@ -153,7 +149,6 @@ impl ChatSession {
                 &self.live_chat_id,
                 &mut self.page_token,
                 &mut self.dedup,
-                &mut self.avatar_cache,
                 &self.tx,
             )
             .await?;

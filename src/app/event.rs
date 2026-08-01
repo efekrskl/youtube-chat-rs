@@ -6,9 +6,17 @@ use ratatui::crossterm::event::KeyEvent;
 pub enum AppEvent {
     Input(KeyEvent),
     Chat(ChatMessage),
+    /// An avatar finished downloading out-of-band; attach it to the messages
+    /// that are already on screen.
+    AvatarReady {
+        url: String,
+        avatar: Arc<KittyAvatar>,
+    },
     Status(StatusEvent),
     Error(String),
     StatsUpdate(StatsMessage),
+    /// The chat producer dropped messages because the UI could not keep up.
+    Dropped(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +40,7 @@ pub struct ChatMessage {
     pub message: String,
     pub kind: MessageKind,
     pub avatar: Option<Arc<KittyAvatar>>,
-    /// Where the author's avatar can be fetched from, if they have one.
+    /// URL the avatar will arrive under, used to patch the message later.
     pub avatar_url: Option<String>,
     pub is_member: bool,
 }

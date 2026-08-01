@@ -1,20 +1,16 @@
-use crate::app::event::{AppEvent, KittyAvatar, StatusEvent};
+use crate::app::event::{AppEvent, StatusEvent};
+use crate::youtube::auth::SCOPES;
+use crate::youtube::avatar::AvatarService;
+use crate::youtube::error::YoutubeError;
+use crate::youtube::message::{MessageDedup, is_chat_ended, map_message};
 use crate::youtube::models::{SearchResponse, VideoListResponse};
 use crate::youtube_api_v3::LiveChatMessageListRequest;
 use crate::youtube_api_v3::v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient;
-use crate::youtube::auth::SCOPES;
-use crate::youtube::error::YoutubeError;
-use crate::youtube::message::{MessageDedup, is_chat_ended, map_message};
 use anyhow::{Context, bail};
-use image::imageops::FilterType;
 use log::debug;
 use reqwest::Url;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tonic::Request;
@@ -50,7 +46,10 @@ pub enum StreamOutcome {
 #[derive(Clone)]
 pub struct YoutubeService {
     auth: Arc<DefaultAuthenticator>,
-    pub http: reqwest::Client,
+    http: reqwest::Client,
+    pub avatars: AvatarService,
+    /// Messages the UI was too slow to accept, reported as soon as it catches up.
+    dropped: Arc<AtomicUsize>,
 }
 
 pub struct LiveVideoDetails {
@@ -59,17 +58,31 @@ pub struct LiveVideoDetails {
 }
 
 impl YoutubeService {
-    pub fn new(auth: Arc<DefaultAuthenticator>) -> anyhow::Result<YoutubeService> {
-        // No default Authorization header: this client also fetches avatar URLs
-        // that come out of API payloads, and the OAuth token must never leave
-        // googleapis.com.
+    pub fn new(
+        auth: Arc<DefaultAuthenticator>,
+        avatar_dir: std::path::PathBuf,
+    ) -> anyhow::Result<YoutubeService> {
+        // No default Authorization header, and a separate client for avatars:
+        // their host comes out of an API payload, and the OAuth token must
+        // never leave googleapis.com.
         let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .connect_timeout(HTTP_CONNECT_TIMEOUT)
             .user_agent(concat!("ytc/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
-        Ok(Self { auth, http })
+        let avatar_http = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .user_agent(concat!("ytc/", env!("CARGO_PKG_VERSION")))
+            .build()?;
+
+        Ok(Self {
+            auth,
+            http,
+            avatars: AvatarService::new(avatar_http, avatar_dir),
+            dropped: Arc::new(AtomicUsize::new(0)),
+        })
     }
 }
 
@@ -255,31 +268,6 @@ impl YoutubeService {
 }
 
 impl YoutubeService {
-    async fn fetch_avatar(&self, avatar_url: &str) -> Option<KittyAvatar> {
-        let response = self.http.get(avatar_url).send().await.ok()?;
-        let bytes = response.bytes().await.ok()?;
-        let image = image::load_from_memory(&bytes).ok()?;
-        let resized = image.resize_to_fill(32, 32, FilterType::Lanczos3);
-        let rgba = resized.to_rgba8();
-        let (width, height) = rgba.dimensions();
-
-        let mut hasher = DefaultHasher::new();
-        avatar_url.hash(&mut hasher);
-        let id = hasher.finish() as u32 & 0x00FF_FFFF;
-
-        let path = std::env::temp_dir().join(format!("ytc-kitty-avatar-{id}.rgba"));
-        let mut file = File::create(&path).ok()?;
-        file.write_all(rgba.as_raw()).ok()?;
-
-        Some(KittyAvatar {
-            id,
-            cols: 2,
-            width,
-            height,
-            path: path.to_string_lossy().into_owned(),
-        })
-    }
-
     /// Build the gRPC channel. Created once and reused across reconnects --
     /// tonic reconnects the underlying transport lazily, so we do not pay for
     /// DNS + TLS on every retry.
@@ -313,7 +301,6 @@ impl YoutubeService {
         live_chat_id: &str,
         page_token: &mut Option<String>,
         dedup: &mut MessageDedup,
-        avatar_cache: &mut HashMap<String, KittyAvatar>,
         tx: &mpsc::Sender<AppEvent>,
     ) -> Result<StreamOutcome, YoutubeError> {
         let mut client = V3DataLiveChatMessageServiceClient::new(channel);
@@ -342,7 +329,7 @@ impl YoutubeService {
         request.metadata_mut().insert("authorization", auth);
 
         let mut stream = client.stream_list(request).await?.into_inner();
-        let _ = tx.send(AppEvent::Status(StatusEvent::Connected)).await;
+        let _ = tx.try_send(AppEvent::Status(StatusEvent::Connected));
 
         while let Some(resp) = stream.message().await? {
             debug!(
@@ -373,20 +360,17 @@ impl YoutubeService {
                     continue;
                 };
 
+                // Attach an already-cached avatar; otherwise kick off a
+                // background fetch. Downloading inline stalled the gRPC reader,
+                // which the server then saw as a dead connection.
                 if let Some(url) = msg.avatar_url.clone() {
-                    msg.avatar = if let Some(cached) = avatar_cache.get(&url) {
-                        Some(Arc::new(cached.clone()))
-                    } else if let Some(fetched) = self.fetch_avatar(&url).await {
-                        avatar_cache.insert(url, fetched.clone());
-                        Some(Arc::new(fetched))
-                    } else {
-                        None
-                    };
+                    match self.avatars.cached(&url) {
+                        Some(avatar) => msg.avatar = Some(avatar),
+                        None => self.spawn_avatar_fetch(url, tx.clone()),
+                    }
                 }
 
-                tx.send(AppEvent::Chat(msg))
-                    .await
-                    .map_err(|_| YoutubeError::Other(anyhow::anyhow!("UI closed")))?;
+                self.emit(tx, AppEvent::Chat(msg))?;
             }
 
             // Only advance the resume point when the server gave us one; a
@@ -402,5 +386,41 @@ impl YoutubeService {
 
         // A completed server stream is normal: resubscribe from where we are.
         Ok(StreamOutcome::Resubscribe)
+    }
+
+    /// Send without ever blocking the gRPC reader. If the UI has fallen behind
+    /// we count the drop rather than applying backpressure all the way into the
+    /// HTTP/2 stream.
+    fn emit(&self, tx: &mpsc::Sender<AppEvent>, event: AppEvent) -> Result<(), YoutubeError> {
+        // A full channel means a `Dropped` event cannot get through either, so
+        // the count is buffered here and reported once there is room again.
+        let pending = self.dropped.swap(0, Ordering::Relaxed);
+        if pending > 0 && tx.try_send(AppEvent::Dropped(pending)).is_err() {
+            self.dropped.fetch_add(pending, Ordering::Relaxed);
+        }
+
+        match tx.try_send(event) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err(YoutubeError::Other(anyhow::anyhow!("UI closed")))
+            }
+        }
+    }
+
+    fn spawn_avatar_fetch(&self, url: String, tx: mpsc::Sender<AppEvent>) {
+        if !self.avatars.claim(&url) {
+            return;
+        }
+
+        let avatars = self.avatars.clone();
+        tokio::spawn(async move {
+            if let Some(avatar) = avatars.fetch(&url).await {
+                let _ = tx.send(AppEvent::AvatarReady { url, avatar }).await;
+            }
+        });
     }
 }
