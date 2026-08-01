@@ -1,0 +1,13 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "dQw4w9WgXcQ",
+      "snippet": {
+        "channelTitle": "Test Channel",
+        "liveBroadcastContent": "none"
+      }
+    }
+  ]
+}
